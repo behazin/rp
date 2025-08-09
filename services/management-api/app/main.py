@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 def init_db():
     """برای اتصال به دیتابیس با منطق تلاش مجدد تلاش می‌کند."""
     db_connected = False
-    max_retries = 10
+    max_retries = 5
     for i in range(max_retries):
         try:
             with engine.connect() as connection:
