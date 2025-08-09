@@ -1,0 +1,9 @@
+# FILE: ./services/management-api/requirements.txt
+fastapi
+uvicorn
+pydantic
+sqlalchemy
+mysql-connector-python
+python-dotenv
+pika
+python-json-logger
