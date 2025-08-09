@@ -30,7 +30,7 @@ def init_db():
             db_connected = True
             break
         except SQLAlchemyError as e:
-            sleep_time = 2 ** i
+            sleep_time = 5
             logger.warning(
                 f"Database connection failed. Retrying in {sleep_time} seconds... (Attempt {i+1}/{max_retries})"
             )
