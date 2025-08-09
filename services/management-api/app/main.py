@@ -17,26 +17,32 @@ from app.api.router import api_router
 setup_logging()
 logger = logging.getLogger(__name__)
 
+# FILE: ./services/management-api/app/main.py
+
 def init_db():
     """برای اتصال به دیتابیس با منطق تلاش مجدد تلاش می‌کند."""
     db_connected = False
-    max_retries = 5
+    max_retries = 6  # افزایش تعداد تلاش‌ها
     for i in range(max_retries):
         try:
+            # یک کوئری ساده برای اطمینان از برقرار بودن واقعی اتصال
             with engine.connect() as connection:
-                pass
+                connection.execute(text('SELECT 1'))
+
             management_models.Base.metadata.create_all(bind=engine)
-            logger.info("Database connection and table creation successful!")
+            logger.info("✅ Database connection and table creation successful!")
             db_connected = True
             break
-        except SQLAlchemyError as e:
-            sleep_time = 5
+        except Exception as e:
+            # استفاده از عقب‌نشینی نمایی (1, 2, 4, 8, ... ثانیه)
+            sleep_time = 8
             logger.warning(
                 f"Database connection failed. Retrying in {sleep_time} seconds... (Attempt {i+1}/{max_retries})"
             )
             time.sleep(sleep_time)
+
     if not db_connected:
-        logger.critical("Could not connect to the database after several retries. Application will exit.")
+        logger.critical("❌ Could not connect to the database after several retries. Application will exit.")
         exit(1)
 
 # --- اجرای برنامه ---

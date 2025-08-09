@@ -24,6 +24,14 @@ services:
       - mysql_data:/var/lib/mysql
     networks:
       - robopost_network
+    # --- START: بخش اصلاح شده Health Check ---
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u${MYSQL_USER}", "-p${MYSQL_PASSWORD}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    # --- END: بخش اضافه شده ---
 
   rabbitmq:
     image: rabbitmq:3.11-management-alpine
@@ -39,3 +47,25 @@ services:
       - rabbitmq_data:/var/lib/rabbitmq/
     networks:
       - robopost_network
+
+  management-api:
+    build:
+      context: ./services/management-api
+      dockerfile: Dockerfile
+    container_name: management-api
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./services/management-api:/usr/src/app
+      - ./common:/usr/src/app/common
+    networks:
+      - robopost_network
+    # --- START: بخش اصلاح شده برای وابستگی ---
+    depends_on:
+      mysql:
+        condition: service_healthy # منتظر می‌ماند تا mysql سالم شود
+      rabbitmq:
+        condition: service_started # برای این سرویس، شروع شدن کافیست
+    # --- END: بخش اصلاح شده ---
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
