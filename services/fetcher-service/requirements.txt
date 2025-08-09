@@ -1,0 +1,5 @@
+# FILE: ./services/fetcher-service/requirements.txt
+requests
+python-dotenv
+python-json-logger
+schedule

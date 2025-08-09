@@ -1,0 +1,6 @@
+# FILE: ./services/publisher-service/requirements.txt
+pika
+python-dotenv
+python-json-logger
+requests
+# در آینده کتابخانه‌های تلگرام، اینستاگرام و... به اینجا اضافه می‌شوند
