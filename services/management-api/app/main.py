@@ -22,20 +22,17 @@ logger = logging.getLogger(__name__)
 def init_db():
     """برای اتصال به دیتابیس با منطق تلاش مجدد تلاش می‌کند."""
     db_connected = False
-    max_retries = 6  # افزایش تعداد تلاش‌ها
+    max_retries = 6
     for i in range(max_retries):
         try:
-            # یک کوئری ساده برای اطمینان از برقرار بودن واقعی اتصال
             with engine.connect() as connection:
                 connection.execute(text('SELECT 1'))
-
             management_models.Base.metadata.create_all(bind=engine)
             logger.info("✅ Database connection and table creation successful!")
             db_connected = True
             break
         except Exception as e:
-            # استفاده از عقب‌نشینی نمایی (1, 2, 4, 8, ... ثانیه)
-            sleep_time = 8
+            sleep_time = 10
             logger.warning(
                 f"Database connection failed. Retrying in {sleep_time} seconds... (Attempt {i+1}/{max_retries})"
             )
