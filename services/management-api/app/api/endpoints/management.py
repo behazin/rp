@@ -1,3 +1,5 @@
+# FILE: ./services/management-api/app/api/endpoints/management.py
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from typing import List
@@ -7,6 +9,8 @@ from app.models import management as models
 from app.schemas import management as schemas
 
 router = APIRouter()
+
+# --- مدیریت منابع (Sources) ---
 
 @router.post("/sources", response_model=schemas.SourceInDB, status_code=201)
 def create_source(source: schemas.SourceCreate, db: Session = Depends(get_db)):
@@ -30,13 +34,15 @@ def delete_source(source_id: int, db: Session = Depends(get_db)):
     db.commit()
     return
 
+# --- مدیریت مقصدها (Destinations) ---
+
 @router.post("/destinations", response_model=schemas.DestinationInDB, status_code=201)
 def create_destination(dest: schemas.DestinationCreate, db: Session = Depends(get_db)):
     db_dest = db.query(models.Destination).filter(models.Destination.name == dest.name).first()
     if db_dest:
         raise HTTPException(status_code=400, detail="Destination name already exists")
         
-    new_dest = models.Destination(**dest.model_dump()) # Use .model_dump() for Pydantic v2
+    new_dest = models.Destination(**dest.model_dump())
     db.add(new_dest)
     db.commit()
     db.refresh(new_dest)
@@ -51,3 +57,41 @@ def delete_destination(destination_id: int, db: Session = Depends(get_db)):
     db.delete(db_dest)
     db.commit()
     return
+
+# --- مدیریت ارتباط بین منابع و مقصدها ---
+
+@router.post("/sources/{source_id}/link/{destination_id}", response_model=schemas.SourceInDB)
+def link_source_to_destination(source_id: int, destination_id: int, db: Session = Depends(get_db)):
+    db_source = db.query(models.Source).filter(models.Source.id == source_id).first()
+    if not db_source:
+        raise HTTPException(status_code=404, detail="Source not found")
+
+    db_dest = db.query(models.Destination).filter(models.Destination.id == destination_id).first()
+    if not db_dest:
+        raise HTTPException(status_code=404, detail="Destination not found")
+
+    db_source.destinations.append(db_dest)
+    db.commit()
+    db.refresh(db_source)
+    return db_source
+
+# --- مدیریت پست‌ها (Posts) ---
+
+@router.get("/posts/pending", response_model=List[schemas.PostInDB])
+def get_pending_posts(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
+    """لیست پست‌های در انتظار تایید را برمی‌گرداند."""
+    posts = db.query(models.Post).filter(models.Post.status == models.PostStatus.PENDING_APPROVAL).offset(skip).limit(limit).all()
+    return posts
+
+@router.post("/posts/{post_id}/approve", response_model=schemas.PostInDB)
+def approve_post(post_id: int, db: Session = Depends(get_db)):
+    """یک پست را تایید می‌کند و وضعیت آن را به 'approved' تغییر می‌دهد."""
+    db_post = db.query(models.Post).filter(models.Post.id == post_id).first()
+    if not db_post:
+        raise HTTPException(status_code=404, detail="Post not found")
+    
+    db_post.status = models.PostStatus.APPROVED
+    db.commit()
+    db.refresh(db_post)
+    # TODO: در آینده، در اینجا یک پیام به RabbitMQ ارسال می‌شود
+    return db_post
