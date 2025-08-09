@@ -1,57 +1,72 @@
-# FILE: ./services/management-api/app/main.py
 import logging
+import time
 from fastapi import FastAPI, Depends
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy import text # Import text
 
-# مهم: این ایمپورت‌ها به لطف volume mount در docker-compose.override.yml کار می‌کنند
 from common.logging_config import setup_logging
-from common.database import get_db, engine, Base
+from common.database import get_db, engine
 from common.rabbit import RabbitMQClient
 
+# مدل‌ها را import می‌کنیم تا SQLAlchemy آنها را بشناسد
+from app.models import management as management_models
+from app.api.router import api_router
+
 # --- پیکربندی اولیه ---
-setup_logging()  # تنظیم لاگر در ابتدای برنامه
+setup_logging()
 logger = logging.getLogger(__name__)
 
-# ایجاد جداول در دیتابیس (اگر وجود نداشته باشند)
-# در یک سناریوی واقعی از ابزارهایی مثل Alembic استفاده می‌شود
-# Base.metadata.create_all(bind=engine)
+def init_db():
+    """برای اتصال به دیتابیس با منطق تلاش مجدد تلاش می‌کند."""
+    db_connected = False
+    max_retries = 10
+    for i in range(max_retries):
+        try:
+            with engine.connect() as connection:
+                pass
+            management_models.Base.metadata.create_all(bind=engine)
+            logger.info("Database connection and table creation successful!")
+            db_connected = True
+            break
+        except SQLAlchemyError as e:
+            sleep_time = 2 ** i
+            logger.warning(
+                f"Database connection failed. Retrying in {sleep_time} seconds... (Attempt {i+1}/{max_retries})"
+            )
+            time.sleep(sleep_time)
+    if not db_connected:
+        logger.critical("Could not connect to the database after several retries. Application will exit.")
+        exit(1)
+
+# --- اجرای برنامه ---
+init_db()
 
 app = FastAPI(title="RoboPost - Management API")
-
 
 @app.on_event("startup")
 def startup_event():
     logger.info("Management API is starting up...")
-    # تست اتصال به RabbitMQ
     try:
         with RabbitMQClient() as client:
             logger.info("RabbitMQ connection test successful on startup.")
     except Exception as e:
         logger.error(f"Could not connect to RabbitMQ on startup: {e}")
-    # تست اتصال به دیتابیس
-    try:
-        # The get_db dependency will handle the connection test on first request
-        logger.info("Database connection will be tested on the first request.")
-    except Exception as e:
-        logger.error(f"Could not connect to Database on startup: {e}")
 
+app.include_router(api_router)
 
 @app.get("/healthz", tags=["Monitoring"])
 def health_check(db: Session = Depends(get_db)):
-    """بررسی وضعیت سلامت سرویس، دیتابیس و RabbitMQ"""
     db_status = "OK"
     rabbit_status = "OK"
     try:
-        # یک کوئری ساده برای تست اتصال به دیتابیس
-        db.execute('SELECT 1')
+        db.execute(text('SELECT 1')) # Use text() for literal SQL
     except Exception:
         db_status = "Error"
-
     try:
         with RabbitMQClient():
-            pass # فقط اتصال را تست می‌کنیم
+            pass
     except Exception:
         rabbit_status = "Error"
     
-    logger.info(f"Health check performed: DB={db_status}, RabbitMQ={rabbit_status}")
     return {"status": "OK", "database": db_status, "rabbitmq": rabbit_status}
