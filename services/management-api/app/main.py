@@ -3,44 +3,46 @@ import time
 from fastapi import FastAPI, Depends
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import SQLAlchemyError
-from sqlalchemy import text # Import text
+from sqlalchemy import text
 
 from common.logging_config import setup_logging
 from common.database import get_db, engine
 from common.rabbit import RabbitMQClient
 
-# مدل‌ها را import می‌کنیم تا SQLAlchemy آنها را بشناسد
 from app.models import management as management_models
 from app.api.router import api_router
 
-# --- پیکربندی اولیه ---
 setup_logging()
 logger = logging.getLogger(__name__)
 
-# FILE: ./services/management-api/app/main.py
 
 def init_db():
-    """برای اتصال به دیتابیس با منطق تلاش مجدد تلاش می‌کند."""
+    """برای اتصال به دیتابیس با منطق تلاش مجدد و لاگ دقیق خطا تلاش می‌کند."""
     db_connected = False
-    max_retries = 6
+    max_retries = 10
     for i in range(max_retries):
         try:
             with engine.connect() as connection:
                 connection.execute(text('SELECT 1'))
+            
             management_models.Base.metadata.create_all(bind=engine)
-            logger.info("✅ Database connection and table creation successful!")
+            logger.info("✅ اتصال به پایگاه داده با موفقیت برقرار و جداول ایجاد شدند!")
             db_connected = True
             break
         except Exception as e:
-            sleep_time = 10
+            # --- START: بخش کلیدی اصلاح شده ---
+            # نمایش دقیق خطا در لاگ
+            sleep_time = 2 ** i
             logger.warning(
-                f"Database connection failed. Retrying in {sleep_time} seconds... (Attempt {i+1}/{max_retries})"
+                f"اتصال به پایگاه داده ناموفق بود. خطا: [{e}]. تلاش مجدد تا {sleep_time} ثانیه دیگر... (تلاش {i + 1}/{max_retries})"
             )
             time.sleep(sleep_time)
+            # --- END: بخش کلیدی اصلاح شده ---
 
     if not db_connected:
-        logger.critical("❌ Could not connect to the database after several retries. Application will exit.")
+        logger.critical("❌ پس از چندین تلاش، اتصال به پایگاه داده برقرار نشد. برنامه خاتمه می‌یابد.")
         exit(1)
+
 
 # --- اجرای برنامه ---
 init_db()
@@ -49,12 +51,12 @@ app = FastAPI(title="RoboPost - Management API")
 
 @app.on_event("startup")
 def startup_event():
-    logger.info("Management API is starting up...")
+    logger.info("Management API در حال راه‌اندازی است...")
     try:
         with RabbitMQClient() as client:
-            logger.info("RabbitMQ connection test successful on startup.")
+            logger.info("تست اتصال به RabbitMQ در هنگام راه‌اندازی موفقیت‌آمیز بود.")
     except Exception as e:
-        logger.error(f"Could not connect to RabbitMQ on startup: {e}")
+        logger.error(f"اتصال به RabbitMQ در هنگام راه‌اندازی با خطا مواجه شد: {e}")
 
 app.include_router(api_router)
 
@@ -63,7 +65,7 @@ def health_check(db: Session = Depends(get_db)):
     db_status = "OK"
     rabbit_status = "OK"
     try:
-        db.execute(text('SELECT 1')) # Use text() for literal SQL
+        db.execute(text('SELECT 1'))
     except Exception:
         db_status = "Error"
     try:

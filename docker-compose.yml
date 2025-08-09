@@ -13,11 +13,8 @@ services:
     image: mysql:8.0
     container_name: mysql
     restart: unless-stopped
-    environment:
-      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
-      MYSQL_DATABASE: ${MYSQL_DATABASE}
-      MYSQL_USER: ${MYSQL_USER}
-      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+    env_file:
+      - .env # اطمینان از خواندن متغیرها
     ports:
       - "3306:3306"
     volumes:
@@ -25,7 +22,6 @@ services:
     networks:
       - robopost_network
     healthcheck:
-      # این دستور به طور دقیق سلامت پایگاه داده را بررسی می‌کند
       test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u${MYSQL_USER}", "-p${MYSQL_PASSWORD}"]
       interval: 10s
       timeout: 5s
@@ -36,12 +32,11 @@ services:
     image: rabbitmq:3.11-management-alpine
     container_name: rabbitmq
     restart: unless-stopped
+    env_file:
+      - .env # اطمینان از خواندن متغیرها
     ports:
       - "5672:5672"
       - "15672:15672"
-    environment:
-      RABBITMQ_DEFAULT_USER: ${RABBITMQ_DEFAULT_USER}
-      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_DEFAULT_PASS}
     volumes:
       - rabbitmq_data:/var/lib/rabbitmq/
     networks:
@@ -52,6 +47,10 @@ services:
       context: ./services/management-api
       dockerfile: Dockerfile
     container_name: management-api
+    # --- START: این بخش کلیدی مشکل را حل می‌کند ---
+    env_file:
+      - .env
+    # --- END: بخش کلیدی ---
     restart: unless-stopped
     ports:
       - "8000:8000"
@@ -62,22 +61,7 @@ services:
       - robopost_network
     depends_on:
       mysql:
-        condition: service_healthy # همچنان برای ترتیب‌دهی اولیه مفید است
+        condition: service_healthy
       rabbitmq:
         condition: service_started
-    # --- START: اسکریپت انتظار برای اطمینان از آمادگی کامل سرویس‌ها ---
-    command: >
-      sh -c "
-        echo '--- Waiting for MySQL to be ready... ---';
-        python -c 'import socket; import time;
-        while True:
-            try:
-                with socket.create_connection((\"mysql\", 3306), timeout=2):
-                    break
-            except OSError:
-                time.sleep(2)';
-        
-        echo '✅ MySQL is ready. Starting RoboPost API...';
-        uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
-      "
-    # --- END: اسکریپت انتظار ---
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload

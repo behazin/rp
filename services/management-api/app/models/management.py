@@ -6,7 +6,7 @@ class Source(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String(255), unique=True, index=True, nullable=False)
-    url = Column(String(2048), unique=True, nullable=False)
+    url = Column(String(767), unique=True, nullable=False)
 
 class Destination(Base):
     __tablename__ = "destinations"
