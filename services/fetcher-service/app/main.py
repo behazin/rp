@@ -7,7 +7,7 @@ import os
 import requests
 import feedparser
 from dotenv import load_dotenv
-
+from common.rabbit import RabbitMQClient 
 from common.logging_config import setup_logging
 
 load_dotenv()
@@ -45,13 +45,25 @@ def is_post_new(post_url: str):
         return False
 
 def create_post(post_data: dict):
+    """یک رکورد پست جدید ایجاد کرده و در صورت موفقیت، پیامی به RabbitMQ ارسال می‌کند."""
     try:
         response = requests.post(f"{MANAGEMENT_API_URL}/posts", json=post_data)
         response.raise_for_status()
-        logger.info(f"Successfully created post: {post_data.get('title_original')}")
-        return response.json()
+        new_post = response.json()
+        logger.info(f"Successfully created post: {new_post.get('title_original')}")
+        
+        try:
+            with RabbitMQClient() as client:
+                message_body = json.dumps({"post_id": new_post.get("id")})
+                client.channel.queue_declare(queue='post_created_queue', durable=True)
+                client.publish(exchange_name="", routing_key="post_created_queue", body=message_body)
+                logger.info(f"Successfully sent creation notification for post_id: {new_post.get('id')}")
+        except Exception as e:
+            logger.error(f"Failed to send creation notification for post_id: {new_post.get('id')}. Error: {e}")
+            
+        return new_post
     except requests.exceptions.RequestException as e:
-        logger.error(f"Could not create post. Data: {post_data.get('title_original')}. Error: {e}")
+        logger.error(f"Could not create post. Data: {post_data}. Error: {e}")
         return None
 
 def fetch_job():

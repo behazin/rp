@@ -116,3 +116,23 @@ services:
         # --- END: بخش اصلاح شده ---
       rabbitmq:
         condition: service_healthy
+
+  processor-service:
+    build:
+      context: ./services/processor-service
+      dockerfile: Dockerfile
+    container_name: processor-service
+    env_file: .env
+    restart: unless-stopped
+    volumes:
+      - ./services/processor-service/app:/usr/src/app/app
+      - ./common:/usr/src/app/common
+    environment:
+      - PYTHONPATH=/usr/src/app
+    networks:
+      - robopost_network
+    depends_on:
+      management-api:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy

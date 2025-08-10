@@ -1,0 +1,4 @@
+pika
+python-dotenv
+python-json-logger
+requests

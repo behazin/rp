@@ -143,3 +143,19 @@ def get_post(post_id: int, db: Session = Depends(get_db)):
     if not db_post:
         raise HTTPException(status_code=404, detail="Post not found")
     return db_post
+
+@router.post("/posts/{post_id}/translations", response_model=schemas.PostTranslationInDB, status_code=201)
+def create_translation_for_post(post_id: int, translation: schemas.PostTranslationCreate, db: Session = Depends(get_db)):
+    """یک ترجمه/پردازش جدید برای یک پست مشخص ایجاد می‌کند."""
+    db_post = db.query(models.Post).filter(models.Post.id == post_id).first()
+    if not db_post:
+        raise HTTPException(status_code=404, detail="Post not found")
+    
+    # model_dump() داده‌های اسکما را به دیکشنری تبدیل می‌کند
+    translation_data = translation.model_dump()
+    new_translation = models.PostTranslation(**translation_data, post_id=post_id)
+    
+    db.add(new_translation)
+    db.commit()
+    db.refresh(new_translation)
+    return new_translation

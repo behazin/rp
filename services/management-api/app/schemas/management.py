@@ -73,3 +73,22 @@ class SourceInDB(SourceInDBBase):
 
 class DestinationInDB(DestinationInDBBase):
     sources: List[SourceInDBBase] = []
+
+class PostTranslationBase(BaseModel):
+    language: str
+    title_translated: Optional[str] = None
+    content_translated: Optional[str] = None
+    featured_image_url: Optional[HttpUrl] = None
+    content_telegram: Optional[str] = None
+    content_instagram: Optional[str] = None
+    content_twitter: Optional[str] = None
+
+# --- START: این کلاس جدید را اضافه کنید ---
+class PostTranslationCreate(PostTranslationBase):
+    pass
+# --- END: بخش اضافه شده ---
+
+class PostTranslationInDB(PostTranslationBase):
+    id: int
+    post_id: int
+    model_config = ConfigDict(from_attributes=True)
