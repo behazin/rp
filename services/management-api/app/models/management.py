@@ -31,6 +31,7 @@ class Destination(Base):
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String(255), unique=True, nullable=False)
     platform = Column(String(50), nullable=False)
+    language = Column(String(10), default="fa", nullable=False)
     credentials = Column(JSON, nullable=False)
     
     sources = relationship(
