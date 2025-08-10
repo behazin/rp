@@ -6,9 +6,11 @@ import logging
 import os
 import requests
 import feedparser
+import json
 from dotenv import load_dotenv
-from common.rabbit import RabbitMQClient 
 from common.logging_config import setup_logging
+from common.rabbit import RabbitMQClient 
+
 
 load_dotenv()
 setup_logging()
