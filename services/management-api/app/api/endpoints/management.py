@@ -40,6 +40,10 @@ def delete_source(source_id: int, db: Session = Depends(get_db)):
     return
 
 # --- مدیریت مقصدها (Destinations) ---
+@router.get("/destinations", response_model=List[schemas.DestinationInDB])
+def get_all_destinations(db: Session = Depends(get_db)):
+    """لیست تمام مقصدهای ثبت شده را برمی‌گرداند."""
+    return db.query(models.Destination).all()
 
 @router.post("/destinations", response_model=schemas.DestinationInDB, status_code=201)
 def create_destination(dest: schemas.DestinationCreate, db: Session = Depends(get_db)):
@@ -64,7 +68,6 @@ def delete_destination(destination_id: int, db: Session = Depends(get_db)):
     return
 
 # --- مدیریت ارتباط بین منابع و مقصدها ---
-
 @router.post("/sources/{source_id}/link/{destination_id}", response_model=schemas.SourceInDB)
 def link_source_to_destination(source_id: int, destination_id: int, db: Session = Depends(get_db)):
     db_source = db.query(models.Source).filter(models.Source.id == source_id).first()
@@ -75,21 +78,22 @@ def link_source_to_destination(source_id: int, destination_id: int, db: Session 
     if not db_dest:
         raise HTTPException(status_code=404, detail="Destination not found")
 
-    db_source.destinations.append(db_dest)
-    db.commit()
-    db.refresh(db_source)
+    if db_dest not in db_source.destinations:
+        db_source.destinations.append(db_dest)
+        db.commit()
+        db.refresh(db_source)
     return db_source
 
 # --- مدیریت پست‌ها (Posts) ---
-
 @router.post("/posts", response_model=schemas.PostInDB, status_code=201)
 def create_post(post: schemas.PostCreate, db: Session = Depends(get_db)):
     """این API توسط fetcher-service برای ایجاد پست جدید استفاده می‌شود."""
-    # model_dump() داده‌های اسکما را به دیکشنری تبدیل می‌کند
-    post_data = post.model_dump()
-    # HttpUrl را به رشته تبدیل می‌کنیم
-    post_data['url_original'] = str(post_data['url_original'])
-    if post_data.get('image_urls_original'):
+    post_data = post.model_dump(exclude_unset=True) # فقط فیلدهای ارسال شده را می‌گیرد
+    
+    # اطمینان از اینکه آبجکت‌های URL به رشته تبدیل شده‌اند
+    if 'url_original' in post_data and post_data['url_original'] is not None:
+        post_data['url_original'] = str(post_data['url_original'])
+    if 'image_urls_original' in post_data and post_data.get('image_urls_original'):
         post_data['image_urls_original'] = [str(url) for url in post_data['image_urls_original']]
     
     new_post = models.Post(**post_data)
@@ -120,7 +124,6 @@ def approve_post(post_id: int, db: Session = Depends(get_db)):
     db_post.status = models.PostStatus.APPROVED
     db.commit()
     
-    # --- START: ارسال پیام به RabbitMQ ---
     try:
         with RabbitMQClient() as client:
             message_body = json.dumps({"post_id": db_post.id})
@@ -129,8 +132,6 @@ def approve_post(post_id: int, db: Session = Depends(get_db)):
             logger.info(f"Successfully sent approval message for post_id: {post_id} to RabbitMQ.")
     except Exception as e:
         logger.error(f"Failed to send message to RabbitMQ for post_id: {post_id}. Error: {e}")
-        # حتی اگر ارسال پیام شکست بخورد، وضعیت پست در دیتابیس تغییر کرده است
-    # --- END: بخش اضافه شده ---
     
     db.refresh(db_post)
     return db_post
