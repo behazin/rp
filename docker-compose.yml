@@ -66,6 +66,14 @@ services:
       rabbitmq:
         condition: service_healthy
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    # --- START: این بخش کلیدی مشکل را حل می‌کند ---
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    # --- END: بخش اضافه شده ---
 
   fetcher-service:
     build:
@@ -77,14 +85,15 @@ services:
     volumes:
       - ./services/fetcher-service/app:/usr/src/app/app
       - ./common:/usr/src/app/common
-    # --- START: این بخش مشکل را حل می‌کند ---
     environment:
       - PYTHONPATH=/usr/src/app
-    # --- END: بخش اضافه شده ---
     networks:
       - robopost_network
     depends_on:
-      - management-api
+      management-api:
+        # --- START: این بخش مشکل را حل می‌کند ---
+        condition: service_healthy
+        # --- END: بخش اصلاح شده ---
 
   publisher-service:
     build:
@@ -96,12 +105,14 @@ services:
     volumes:
       - ./services/publisher-service/app:/usr/src/app/app
       - ./common:/usr/src/app/common
-    # --- START: این بخش مشکل را حل می‌کند ---
     environment:
       - PYTHONPATH=/usr/src/app
-    # --- END: بخش اضافه شده ---
     networks:
       - robopost_network
     depends_on:
-      - management-api
-      - rabbitmq
+      management-api:
+        # --- START: این بخش مشکل را حل می‌کند ---
+        condition: service_healthy
+        # --- END: بخش اصلاح شده ---
+      rabbitmq:
+        condition: service_healthy
