@@ -15,6 +15,7 @@ setup_logging()
 logger = logging.getLogger(__name__)
 
 MANAGEMENT_API_URL = os.getenv("MANAGEMENT_API_URL", "http://management-api:8000")
+MAX_CONTENT_LENGTH = 10000 # حداکثر طول مجاز برای محتوای اصلی
 
 def get_all_sources():
     """از management-api لیست تمام منابع را با منطق تلاش مجدد دریافت می‌کند."""
@@ -34,7 +35,6 @@ def get_all_sources():
     logger.error("Could not connect to management-api after several retries.")
     return []
 
-# ... (بقیه توابع is_post_new و create_post بدون تغییر باقی می‌مانند) ...
 def is_post_new(post_url: str):
     try:
         response = requests.get(f"{MANAGEMENT_API_URL}/posts/exists", params={"url_original": post_url})
@@ -51,7 +51,7 @@ def create_post(post_data: dict):
         logger.info(f"Successfully created post: {post_data.get('title_original')}")
         return response.json()
     except requests.exceptions.RequestException as e:
-        logger.error(f"Could not create post. Data: {post_data}. Error: {e}")
+        logger.error(f"Could not create post. Data: {post_data.get('title_original')}. Error: {e}")
         return None
 
 def fetch_job():
@@ -76,12 +76,19 @@ def fetch_job():
             if not post_url or not is_post_new(post_url):
                 continue
 
+            # --- START: پاکسازی و کوتاه‌سازی محتوا ---
+            content = entry.get("summary", "")
+            if len(content) > MAX_CONTENT_LENGTH:
+                logger.warning(f"Content from {post_url} is too long ({len(content)} chars). Truncating to {MAX_CONTENT_LENGTH}.")
+                content = content[:MAX_CONTENT_LENGTH]
+            # --- END: بخش اضافه شده ---
+
             post_data = {
                 "source_id": source_id,
                 "title_original": entry.get("title", "No Title"),
-                "content_original": entry.get("summary", ""),
+                "content_original": content, # <-- استفاده از محتوای پاکسازی شده
                 "url_original": post_url,
-                "image_urls_original": [img['href'] for img in entry.get('media_content', []) if 'href' in img]
+                "image_urls_original": [img.get('href') for img in entry.get('media_content', []) if img.get('href')]
             }
             if create_post(post_data):
                 new_posts_found += 1
@@ -96,8 +103,8 @@ def main():
     
     schedule.every(5).minutes.do(fetch_job)
     
-    logger.info("Initial fetch run will start after a short delay to allow other services to boot...")
-    time.sleep(15)  # <-- یک تاخیر اولیه برای اطمینان از آمادگی management-api
+    logger.info("Initial fetch run will start after a short delay...")
+    time.sleep(15)
     fetch_job()
     
     while True:
