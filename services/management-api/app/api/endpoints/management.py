@@ -3,7 +3,8 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from typing import List
-
+import json
+from common.rabbit import RabbitMQClient
 from common.database import get_db
 from app.models import management as models
 from app.schemas import management as schemas
@@ -111,13 +112,33 @@ def get_pending_posts(skip: int = 0, limit: int = 100, db: Session = Depends(get
 
 @router.post("/posts/{post_id}/approve", response_model=schemas.PostInDB)
 def approve_post(post_id: int, db: Session = Depends(get_db)):
-    """یک پست را تایید می‌کند و وضعیت آن را به 'approved' تغییر می‌دهد."""
+    """یک پست را تایید می‌کند، وضعیت آن را به 'approved' تغییر می‌دهد و پیامی به RabbitMQ ارسال می‌کند."""
     db_post = db.query(models.Post).filter(models.Post.id == post_id).first()
     if not db_post:
         raise HTTPException(status_code=404, detail="Post not found")
     
     db_post.status = models.PostStatus.APPROVED
     db.commit()
+    
+    # --- START: ارسال پیام به RabbitMQ ---
+    try:
+        with RabbitMQClient() as client:
+            message_body = json.dumps({"post_id": db_post.id})
+            client.channel.queue_declare(queue='post_approval_queue', durable=True)
+            client.publish(exchange_name="", routing_key="post_approval_queue", body=message_body)
+            logger.info(f"Successfully sent approval message for post_id: {post_id} to RabbitMQ.")
+    except Exception as e:
+        logger.error(f"Failed to send message to RabbitMQ for post_id: {post_id}. Error: {e}")
+        # حتی اگر ارسال پیام شکست بخورد، وضعیت پست در دیتابیس تغییر کرده است
+    # --- END: بخش اضافه شده ---
+    
     db.refresh(db_post)
-    # TODO: در آینده، در اینجا یک پیام به RabbitMQ ارسال می‌شود
+    return db_post
+
+@router.get("/posts/{post_id}", response_model=schemas.PostInDB)
+def get_post(post_id: int, db: Session = Depends(get_db)):
+    """اطلاعات یک پست مشخص را بر اساس شناسه آن برمی‌گرداند."""
+    db_post = db.query(models.Post).filter(models.Post.id == post_id).first()
+    if not db_post:
+        raise HTTPException(status_code=404, detail="Post not found")
     return db_post

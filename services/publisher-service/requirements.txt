@@ -3,4 +3,4 @@ pika
 python-dotenv
 python-json-logger
 requests
-# در آینده کتابخانه‌های تلگرام، اینستاگرام و... به اینجا اضافه می‌شوند
+python-telegram-bot==13.15
