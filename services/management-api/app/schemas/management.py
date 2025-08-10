@@ -6,7 +6,6 @@ from datetime import datetime
 from app.models.management import PostStatus
 
 # --- Base Schemas ---
-# این اسکماها برای جلوگیری از تکرار در اسکماهای دیگر استفاده می‌شوند
 class SourceBase(BaseModel):
     name: str
     url: HttpUrl
@@ -31,8 +30,8 @@ class DestinationCreate(DestinationBase):
 class DestinationInDBBase(DestinationBase):
     id: int
     model_config = ConfigDict(from_attributes=True)
-
-# --- Post Translation Schemas (برای هر زبان) ---
+    
+# --- Post Translation Schemas ---
 class PostTranslationBase(BaseModel):
     language: str
     title_translated: Optional[str] = None
@@ -46,15 +45,18 @@ class PostTranslationInDB(PostTranslationBase):
     id: int
     post_id: int
     model_config = ConfigDict(from_attributes=True)
-    
-# --- Post Schemas (پست اصلی) ---
+
+# --- Post Schemas ---
 class PostBase(BaseModel):
     title_original: Optional[str] = None
     content_original: Optional[str] = None
-    image_urls_original: Optional[List[HttpUrl]] = None
+    # --- START: این خط فراموش شده بود ---
+    url_original: Optional[HttpUrl] = None
+    # --- END: بخش اضافه شده ---
+    image_urls_original: Optional[List[HttpUrl]] = []
     score: Optional[float] = None
 
-class PostCreate(PostBase): # <-- این اسکما فراموش شده بود
+class PostCreate(PostBase):
     source_id: int
 
 class PostInDB(PostBase):
@@ -62,11 +64,10 @@ class PostInDB(PostBase):
     source_id: int
     status: PostStatus
     created_at: datetime
-    translations: List[PostTranslationInDB] = [] # نمایش ترجمه‌های مرتبط
+    translations: List[PostTranslationInDB] = []
     model_config = ConfigDict(from_attributes=True)
 
 # --- اسکماهای نهایی برای نمایش روابط ---
-# این اسکماها به ما اجازه می‌دهند تا ببینیم هر منبع به کدام مقصدها متصل است و بالعکس
 class SourceInDB(SourceInDBBase):
     destinations: List[DestinationInDBBase] = []
 
