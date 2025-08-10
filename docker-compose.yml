@@ -13,8 +13,7 @@ services:
     image: mysql:8.0
     container_name: mysql
     restart: unless-stopped
-    env_file:
-      - .env # اطمینان از خواندن متغیرها
+    env_file: .env
     ports:
       - "3306:3306"
     volumes:
@@ -22,7 +21,7 @@ services:
     networks:
       - robopost_network
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u${MYSQL_USER}", "-p${MYSQL_PASSWORD}"]
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u$${MYSQL_USER}", "-p$${MYSQL_PASSWORD}"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -32,8 +31,7 @@ services:
     image: rabbitmq:3.11-management-alpine
     container_name: rabbitmq
     restart: unless-stopped
-    env_file:
-      - .env # اطمینان از خواندن متغیرها
+    env_file: .env
     ports:
       - "5672:5672"
       - "15672:15672"
@@ -41,16 +39,19 @@ services:
       - rabbitmq_data:/var/lib/rabbitmq/
     networks:
       - robopost_network
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
 
   management-api:
     build:
       context: ./services/management-api
       dockerfile: Dockerfile
     container_name: management-api
-    # --- START: این بخش کلیدی مشکل را حل می‌کند ---
-    env_file:
-      - .env
-    # --- END: بخش کلیدی ---
+    env_file: .env
     restart: unless-stopped
     ports:
       - "8000:8000"
@@ -63,5 +64,43 @@ services:
       mysql:
         condition: service_healthy
       rabbitmq:
-        condition: service_started
+        condition: service_healthy
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+
+  fetcher-service:
+    build:
+      context: ./services/fetcher-service
+      dockerfile: Dockerfile
+    container_name: fetcher-service
+    env_file: .env
+    restart: unless-stopped
+    volumes:
+      - ./services/fetcher-service/app:/usr/src/app/app
+      - ./common:/usr/src/app/common
+    environment:
+      - PYTHONPATH=/usr/src/app
+    networks:
+      - robopost_network
+    depends_on:
+      management-api:
+        condition: service_started
+
+  publisher-service:
+    build:
+      context: ./services/publisher-service
+      dockerfile: Dockerfile
+    container_name: publisher-service
+    env_file: .env
+    restart: unless-stopped
+    volumes:
+      - ./services/publisher-service/app:/usr/src/app/app
+      - ./common:/usr/src/app/common
+    environment:
+      - PYTHONPATH=/usr/src/app
+    networks:
+      - robopost_network
+    depends_on:
+      management-api:
+        condition: service_started
+      rabbitmq:
+        condition: service_healthy

@@ -49,6 +49,7 @@ class PostStatus(str, enum.Enum):
 class Post(Base):
     __tablename__ = "posts"
     id = Column(Integer, primary_key=True, index=True)
+    url_original = Column(String(767), unique=True, index=True)
     source_id = Column(Integer, ForeignKey("sources.id"))
     
     # ستون‌های مدیریتی و متادیتا

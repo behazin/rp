@@ -2,16 +2,13 @@
 import pika
 import os
 import logging
+import time
 from dotenv import load_dotenv
 
 load_dotenv()
 logger = logging.getLogger(__name__)
 
 class RabbitMQClient:
-    """
-    یک کلاینت RabbitMQ برای مدیریت اتصال، انتشار و مصرف پیام‌ها.
-    این کلاس به صورت Context Manager (`with`) قابل استفاده است.
-    """
     def __init__(self):
         self.host = os.getenv("RABBITMQ_HOST", "rabbitmq")
         self.port = int(os.getenv("RABBITMQ_PORT", 5672))
@@ -21,19 +18,26 @@ class RabbitMQClient:
         self.channel = None
 
     def _connect(self):
-        """اتصال به RabbitMQ را برقرار می‌کند."""
         credentials = pika.PlainCredentials(self.user, self.password)
         parameters = pika.ConnectionParameters(self.host, self.port, '/', credentials)
-        try:
-            self.connection = pika.BlockingConnection(parameters)
-            self.channel = self.connection.channel()
-            logger.info("Successfully connected to RabbitMQ.")
-        except pika.exceptions.AMQPConnectionError as e:
-            logger.error(f"Failed to connect to RabbitMQ: {e}")
-            raise
+        
+        max_retries = 10
+        for i in range(max_retries):
+            try:
+                self.connection = pika.BlockingConnection(parameters)
+                self.channel = self.connection.channel()
+                logger.info("✅ Successfully connected to RabbitMQ.")
+                return
+            except pika.exceptions.AMQPConnectionError as e:
+                sleep_time = 2 ** i
+                logger.warning(f"RabbitMQ connection failed. Retrying in {sleep_time} seconds... (Attempt {i+1}/{max_retries})")
+                time.sleep(sleep_time)
+        
+        logger.critical("❌ Could not connect to RabbitMQ after several retries.")
+        raise pika.exceptions.AMQPConnectionError("Failed to connect to RabbitMQ.")
+
 
     def publish(self, exchange_name: str, routing_key: str, body: str):
-        """یک پیام را در یک exchange منتشر می‌کند."""
         if not self.channel or self.channel.is_closed:
             self._connect()
         
@@ -41,24 +45,19 @@ class RabbitMQClient:
             exchange=exchange_name,
             routing_key=routing_key,
             body=body,
-            properties=pika.BasicProperties(
-                delivery_mode=2,  # make message persistent
-            )
+            properties=pika.BasicProperties(delivery_mode=2)
         )
         logger.info(f"Message published to exchange '{exchange_name}' with key '{routing_key}'.")
 
     def start_consuming(self, queue_name: str, callback):
-        """شروع به مصرف پیام از یک صف مشخص می‌کند."""
         if not self.channel or self.channel.is_closed:
             self._connect()
         
-        # Fair Dispatch: تضمین می‌کند که هر worker فقط یک پیام در لحظه پردازش می‌کند.
         self.channel.basic_qos(prefetch_count=1)
         
         self.channel.basic_consume(
             queue=queue_name,
             on_message_callback=callback
-            # auto_ack=False is handled in the consumer callback
         )
         
         logger.info(f"Waiting for messages in queue '{queue_name}'. To exit press CTRL+C")
@@ -68,7 +67,6 @@ class RabbitMQClient:
             self.close()
 
     def close(self):
-        """اتصال را می‌بندد."""
         if self.channel and self.channel.is_open:
             self.channel.close()
         if self.connection and self.connection.is_open:

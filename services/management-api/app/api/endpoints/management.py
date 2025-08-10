@@ -11,6 +11,10 @@ from app.schemas import management as schemas
 router = APIRouter()
 
 # --- مدیریت منابع (Sources) ---
+@router.get("/sources", response_model=List[schemas.SourceInDB])
+def get_all_sources(db: Session = Depends(get_db)):
+    """لیست تمام منابع ثبت شده را برمی‌گرداند."""
+    return db.query(models.Source).all()
 
 @router.post("/sources", response_model=schemas.SourceInDB, status_code=201)
 def create_source(source: schemas.SourceCreate, db: Session = Depends(get_db)):
@@ -76,6 +80,12 @@ def link_source_to_destination(source_id: int, destination_id: int, db: Session 
     return db_source
 
 # --- مدیریت پست‌ها (Posts) ---
+
+@router.get("/posts/exists")
+def post_exists(url: str, db: Session = Depends(get_db)):
+    """بررسی می‌کند آیا پستی با URL مشخص شده وجود دارد یا خیر."""
+    db_post = db.query(models.Post).filter(models.Post.url_original == url).first()
+    return {"exists": db_post is not None}
 
 @router.get("/posts/pending", response_model=List[schemas.PostInDB])
 def get_pending_posts(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
