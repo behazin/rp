@@ -4,3 +4,4 @@ python-dotenv
 python-json-logger
 schedule
 feedparser
+pika
