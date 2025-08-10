@@ -69,9 +69,9 @@ services:
     # --- START: این بخش کلیدی مشکل را حل می‌کند ---
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/healthz"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
+      interval: 20s
+      timeout: 20s
+      retries: 10
       start_period: 30s
     # --- END: بخش اضافه شده ---
 
