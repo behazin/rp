@@ -54,6 +54,9 @@ class PostBase(BaseModel):
     image_urls_original: Optional[List[HttpUrl]] = None
     score: Optional[float] = None
 
+class PostCreate(PostBase): # <-- این اسکما فراموش شده بود
+    source_id: int
+
 class PostInDB(PostBase):
     id: int
     source_id: int

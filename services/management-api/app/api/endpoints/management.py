@@ -81,10 +81,26 @@ def link_source_to_destination(source_id: int, destination_id: int, db: Session 
 
 # --- مدیریت پست‌ها (Posts) ---
 
+@router.post("/posts", response_model=schemas.PostInDB, status_code=201)
+def create_post(post: schemas.PostCreate, db: Session = Depends(get_db)):
+    """این API توسط fetcher-service برای ایجاد پست جدید استفاده می‌شود."""
+    # model_dump() داده‌های اسکما را به دیکشنری تبدیل می‌کند
+    post_data = post.model_dump()
+    # HttpUrl را به رشته تبدیل می‌کنیم
+    post_data['url_original'] = str(post_data['url_original'])
+    if post_data.get('image_urls_original'):
+        post_data['image_urls_original'] = [str(url) for url in post_data['image_urls_original']]
+    
+    new_post = models.Post(**post_data)
+    db.add(new_post)
+    db.commit()
+    db.refresh(new_post)
+    return new_post
+
 @router.get("/posts/exists")
-def post_exists(url: str, db: Session = Depends(get_db)):
+def post_exists(url_original: str, db: Session = Depends(get_db)):
     """بررسی می‌کند آیا پستی با URL مشخص شده وجود دارد یا خیر."""
-    db_post = db.query(models.Post).filter(models.Post.url_original == url).first()
+    db_post = db.query(models.Post).filter(models.Post.url_original == url_original).first()
     return {"exists": db_post is not None}
 
 @router.get("/posts/pending", response_model=List[schemas.PostInDB])
