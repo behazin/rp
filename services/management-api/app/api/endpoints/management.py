@@ -8,6 +8,7 @@ from common.rabbit import RabbitMQClient
 from common.database import get_db
 from app.models import management as models
 from app.schemas import management as schemas
+import logging 
 
 router = APIRouter()
 
