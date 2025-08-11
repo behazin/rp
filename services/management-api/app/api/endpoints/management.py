@@ -11,6 +11,7 @@ from app.schemas import management as schemas
 import logging 
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 # --- مدیریت منابع (Sources) ---
 @router.get("/sources", response_model=List[schemas.SourceInDB])
