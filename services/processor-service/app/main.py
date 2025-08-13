@@ -1,4 +1,3 @@
-
 # FILE: ./services/processor-service/app/main.py
 # Updated for latest Google Gen AI SDK (google-genai): structured JSON output + client.models.generate_content
 
@@ -15,7 +14,7 @@ from google import genai
 from google.genai import types
 from pydantic import BaseModel
 
-# Project-shared utilities (expected to exist in your monorepo)
+# Project-shared utilities
 from common.logging_config import setup_logging
 from common.rabbit import RabbitMQClient
 
@@ -27,12 +26,12 @@ load_dotenv()
 QUEUE_NAME = os.getenv("QUEUE_NAME", "post_created_queue")
 MANAGEMENT_API_URL = os.getenv("MANAGEMENT_API_URL", "http://management-api:8000")
 
-# The SDK auto-detects GEMINI_API_KEY or GOOGLE_API_KEY from env;
-# we'll also pass explicitly for clarity.
+# The SDK auto-detects GEMINI_API_KEY or GOOGLE_API_KEY from env
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
 
+# ---- Logging: FIXED (no arg to setup_logging) ----
+setup_logging()
 logger = logging.getLogger("processor-service")
-setup_logging(logger)
 
 # ---------------------------
 # Structured Output Schemas
@@ -55,7 +54,7 @@ except Exception as e:
     logger.critical(f"❌ Failed to initialize Gemini client: {e}", exc_info=True)
 
 # ---------------------------
-# Prompts (kept for readability; JSON shape enforced by response_schema)
+# Prompts (JSON shape enforced by response_schema)
 # ---------------------------
 TRANSLATE_PROMPT = (
     'Translate the following English tech news title and content to Persian.\n'
@@ -100,7 +99,7 @@ def save_translation(post_id: int, translation_data: dict):
 # Core processing
 # ---------------------------
 def _safety_settings():
-    # Adjust as needed; example sets BLOCK_NONE for common categories
+    # tune as needed for prod
     return [
         types.SafetySetting(
             category=types.HarmCategory.HARM_CATEGORY_HATE_SPEECH,
@@ -124,10 +123,7 @@ def translate_with_gemini(title: str, content: str) -> Translation:
     if not client:
         raise RuntimeError("Gemini client not initialized")
 
-    sys_instruction = (
-        "You are a professional Persian translator. "
-        "Return ONLY the translation fields. Preserve numbers, punctuation, and line breaks."
-    )
+    sys_instruction = "You are a professional Persian translator. Return ONLY the translation fields. Preserve numbers, punctuation, and line breaks."
     prompt = TRANSLATE_PROMPT.format(title=title or "", content=content or "")
     resp = client.models.generate_content(
         model="gemini-2.0-flash",
@@ -141,20 +137,17 @@ def translate_with_gemini(title: str, content: str) -> Translation:
         ),
     )
     obj: Translation = resp.parsed  # Parsed via schema
-    if not obj:
-        # Fallback if schema parsing failed
-        data = json.loads(resp.text)
-        return Translation(**data)
-    return obj
+    if obj:
+        return obj
+    # Fallback if schema parsing failed
+    data = json.loads(resp.text)
+    return Translation(**data)
 
 def summarize_for_telegram(title_fa: str, content_fa: str, max_chars: int = 1000) -> str:
     if not client:
         raise RuntimeError("Gemini client not initialized")
 
-    sys_instruction = (
-        "You are a concise Persian copywriter for a Telegram tech channel. "
-        "Return ONLY the summary text without extra formatting or emojis."
-    )
+    sys_instruction = "You are a concise Persian copywriter for a Telegram tech channel. Return ONLY the summary text without extra formatting or emojis."
     prompt = TELEGRAM_SUMMARY_PROMPT.format(title=title_fa or "", content=content_fa or "", max_chars=max_chars)
     resp = client.models.generate_content(
         model="gemini-2.0-flash",
@@ -168,10 +161,7 @@ def summarize_for_telegram(title_fa: str, content_fa: str, max_chars: int = 1000
         ),
     )
     obj: TelegramSummary = resp.parsed
-    if obj and obj.summary:
-        return obj.summary.strip()
-    # Fallback
-    return resp.text.strip()
+    return obj.summary.strip() if (obj and obj.summary) else resp.text.strip()
 
 def process_post_with_ai(post_details: dict):
     """Main pipeline: translate EN->FA then create Telegram summary, send to management-api."""
@@ -190,7 +180,9 @@ def process_post_with_ai(post_details: dict):
 
         # 2) Summarize for Telegram
         logger.info(f"Summarizing for Telegram, post_id={post_id}")
-        telegram_summary = summarize_for_telegram(translation.title_translated, translation.content_translated, max_chars=1000)
+        telegram_summary = summarize_for_telegram(
+            translation.title_translated, translation.content_translated, max_chars=1000
+        )
 
         # 3) Build payload and persist
         featured_image_url = None
