@@ -56,6 +56,7 @@ coverage.xml
 # Environments
 .env
 *.json
+*.DS_Store
 .env.*
 !.env.example
 .venv
