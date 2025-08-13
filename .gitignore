@@ -56,7 +56,6 @@ coverage.xml
 # Environments
 .env
 *.json
-*.DS_Store
 .env.*
 !.env.example
 .venv
@@ -74,3 +73,4 @@ docker-volumes/
 .idea/
 .vscode/
 *.swp
+.DS_Store
