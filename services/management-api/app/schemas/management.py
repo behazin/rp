@@ -73,3 +73,7 @@ class SourceInDB(SourceInDBBase):
 
 class DestinationInDB(DestinationInDBBase):
     sources: List[SourceInDBBase] = []
+
+
+class PostTranslationCreate(PostTranslationBase):
+    pass
