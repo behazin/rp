@@ -7,20 +7,19 @@ import os
 import requests
 import feedparser
 import json
+from newspaper import Article # <--- کتابخانه جدید ایمپورت شد
 from dotenv import load_dotenv
 from common.logging_config import setup_logging
-from common.rabbit import RabbitMQClient 
-
+from common.rabbit import RabbitMQClient
 
 load_dotenv()
 setup_logging()
 logger = logging.getLogger(__name__)
 
 MANAGEMENT_API_URL = os.getenv("MANAGEMENT_API_URL", "http://management-api:8000")
-MAX_CONTENT_LENGTH = 10000 # حداکثر طول مجاز برای محتوای اصلی
 
 def get_all_sources():
-    """از management-api لیست تمام منابع را با منطق تلاش مجدد دریافت می‌کند."""
+    """Fetches all sources from the management-api with a retry logic."""
     max_retries = 10
     for i in range(max_retries):
         try:
@@ -38,6 +37,7 @@ def get_all_sources():
     return []
 
 def is_post_new(post_url: str):
+    """Checks if a post with the given URL already exists."""
     try:
         response = requests.get(f"{MANAGEMENT_API_URL}/posts/exists", params={"url_original": post_url})
         response.raise_for_status()
@@ -47,7 +47,7 @@ def is_post_new(post_url: str):
         return False
 
 def create_post(post_data: dict):
-    """یک رکورد پست جدید ایجاد کرده و در صورت موفقیت، پیامی به RabbitMQ ارسال می‌کند."""
+    """Creates a new post record and sends a message to RabbitMQ on success."""
     try:
         response = requests.post(f"{MANAGEMENT_API_URL}/posts", json=post_data)
         response.raise_for_status()
@@ -84,29 +84,45 @@ def fetch_job():
         feed = feedparser.parse(source_url)
         
         new_posts_found = 0
-        for entry in feed.entries:
+        
+        for entry in feed.entries[:30]:
             post_url = entry.get("link")
             
             if not post_url or not is_post_new(post_url):
                 continue
+            
+            try:
+                logger.info(f"Extracting content from: {post_url} using newspaper3k")
+                
+                # --- START: منطق کامل استخراج با newspaper3k ---
+                article = Article(post_url)
+                article.download()
+                article.parse()
+                
+                title = article.title
+                content = article.text
+                # newspaper3k به صورت خودکار تمام تصاویر را استخراج می‌کند
+                # ما از set() برای حذف تصاویر تکراری احتمالی استفاده می‌کنیم
+                images = list(set(article.images))
+                # --- END: بخش استخراج ---
 
-            # --- START: پاکسازی و کوتاه‌سازی محتوا ---
-            content = entry.get("summary", "")
-            if len(content) > MAX_CONTENT_LENGTH:
-                logger.warning(f"Content from {post_url} is too long ({len(content)} chars). Truncating to {MAX_CONTENT_LENGTH}.")
-                content = content[:MAX_CONTENT_LENGTH]
-            # --- END: بخش اضافه شده ---
+                if not content:
+                    logger.warning(f"Newspaper3k could not extract main content from {post_url}. Skipping.")
+                    continue
 
-            post_data = {
-                "source_id": source_id,
-                "title_original": entry.get("title", "No Title"),
-                "content_original": content, # <-- استفاده از محتوای پاکسازی شده
-                "url_original": post_url,
-                "image_urls_original": [img.get('href') for img in entry.get('media_content', []) if img.get('href')]
-            }
-            if create_post(post_data):
-                new_posts_found += 1
-        
+                post_data = {
+                    "source_id": source_id,
+                    "title_original": title or entry.get("title", "No Title"),
+                    "content_original": content,
+                    "url_original": post_url,
+                    "image_urls_original": images
+                }
+                if create_post(post_data):
+                    new_posts_found += 1
+            
+            except Exception as e:
+                logger.error(f"Failed to process article {post_url}. Error: {e}", exc_info=True)
+
         logger.info(f"Found {new_posts_found} new posts for source '{source.get('name')}'.")
             
     logger.info("✅ Fetcher job finished.")
