@@ -55,12 +55,19 @@ def publish_to_telegram(destination: dict, post_translation: dict, post_url: str
 
     try:
         bot = telegram.Bot(token=bot_token)
-
+        RLM = "\u200f"
+        title = RLM + post_translation.get('title_translated', '')
+        raw_content = post_translation.get('content_telegram', '')
+        paragraphs = [RLM + p.strip() for p in raw_content.split('\n') if p.strip()]
+        content = "\n".join(paragraphs)
+        
+        # ساختار نهایی پیام
         message = (
-            f"*{post_translation.get('title_translated')}*\n\n"
-            f"{post_translation.get('content_telegram')}\n\n"
+            f"*{title}*\n\n"
+            f"{content}\n\n"
             f"[Read More]({post_url})"
         )
+
 
         bot.send_message(
             chat_id=chat_id,
