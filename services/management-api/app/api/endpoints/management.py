@@ -4,11 +4,12 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from typing import List
 import json
+import logging
 from common.rabbit import RabbitMQClient
 from common.database import get_db
 from app.models import management as models
 from app.schemas import management as schemas
-import logging 
+
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -89,20 +90,18 @@ def link_source_to_destination(source_id: int, destination_id: int, db: Session 
 # --- مدیریت پست‌ها (Posts) ---
 @router.post("/posts", response_model=schemas.PostInDB, status_code=201)
 def create_post(post: schemas.PostCreate, db: Session = Depends(get_db)):
-    """این API توسط fetcher-service برای ایجاد پست جدید استفاده می‌شود."""
-    post_data = post.model_dump(exclude_unset=True) # فقط فیلدهای ارسال شده را می‌گیرد
-    
-    # اطمینان از اینکه آبجکت‌های URL به رشته تبدیل شده‌اند
+    post_data = post.model_dump(exclude_unset=True)
     if 'url_original' in post_data and post_data['url_original'] is not None:
         post_data['url_original'] = str(post_data['url_original'])
     if 'image_urls_original' in post_data and post_data.get('image_urls_original'):
         post_data['image_urls_original'] = [str(url) for url in post_data['image_urls_original']]
-    
+
     new_post = models.Post(**post_data)
     db.add(new_post)
     db.commit()
     db.refresh(new_post)
     return new_post
+
 
 @router.get("/posts/exists")
 def post_exists(url_original: str, db: Session = Depends(get_db)):
@@ -152,9 +151,10 @@ def create_translation_for_post(post_id: int, translation: schemas.PostTranslati
     db_post = db.query(models.Post).filter(models.Post.id == post_id).first()
     if not db_post:
         raise HTTPException(status_code=404, detail="Post not found")
-    
-    # model_dump() داده‌های اسکما را به دیکشنری تبدیل می‌کند
+
     translation_data = translation.model_dump()
+    if 'featured_image_url' in translation_data and translation_data['featured_image_url'] is not None:
+        translation_data['featured_image_url'] = str(translation_data['featured_image_url'])
     new_translation = models.PostTranslation(**translation_data, post_id=post_id)
     
     db.add(new_translation)

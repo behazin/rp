@@ -57,8 +57,12 @@ except Exception as e:
 # Prompts (JSON shape enforced by response_schema)
 # ---------------------------
 TRANSLATE_PROMPT = (
-    'Translate the following English tech news title and content to Persian.\n'
-    'Return ONLY the translated fields.\n\n'
+"You are a professional editor and translator tasked with translating English tech news into Persian.\n"
+    "Your instructions are:\n"
+    "1. First, analyze the **Content** field. You MUST 'clean' it by completely removing any text that is not part of the main article, such as advertisements, event promotions, or author bios.\n"
+    "2. Second, translate the original **Title** and the now-cleaned **Content** into fluent Persian.\n"
+    "3. **CRUCIAL:** You MUST preserve the original paragraph structure from the cleaned content. The translated text must have the exact same line breaks and paragraph separations as the source.\n"
+    "4. Finally, return ONLY the translated fields in the specified format. Do not add any extra comments or explanations.\n\n"
     '**Title:** "{title}"\n'
     '**Content:** "{content}"'
 )
@@ -126,7 +130,7 @@ def translate_with_gemini(title: str, content: str) -> Translation:
     sys_instruction = "You are a professional Persian translator. Return ONLY the translation fields. Preserve numbers, punctuation, and line breaks."
     prompt = TRANSLATE_PROMPT.format(title=title or "", content=content or "")
     resp = client.models.generate_content(
-        model="gemini-2.0-flash",
+        model="gemini-2.5-flash",
         contents=prompt,
         config=types.GenerateContentConfig(
             system_instruction=sys_instruction,
