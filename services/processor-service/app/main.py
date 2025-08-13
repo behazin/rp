@@ -203,6 +203,8 @@ def process_post_with_ai(post_details: dict):
             "content_translated": translation.content_translated,
             "content_telegram": telegram_summary,
             "featured_image_url": featured_image_url,
+            "content_instagram": "NULL",
+            "content_twitter": "NULL",
         }
         save_translation(post_id, final_data)
 
