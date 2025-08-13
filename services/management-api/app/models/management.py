@@ -55,7 +55,6 @@ class Post(Base):
     
     # ستون‌های مدیریتی و متادیتا
     status = Column(Enum(PostStatus), default=PostStatus.PENDING_APPROVAL, nullable=False)
-    score = Column(Float) # امتیاز هوش مصنوعی
     created_at = Column(DateTime(timezone=True), server_default=func.now()) # تاریخ ایجاد خودکار
     admin_chat_id = Column(String(255)) # شناسه چت مدیر
     admin_message_id = Column(String(255)) # شناسه پیام مدیریتی
@@ -74,6 +73,7 @@ class PostTranslation(Base):
     post_id = Column(Integer, ForeignKey("posts.id"), nullable=False)
     
     language = Column(String(5), nullable=False) # e.g., "fa", "ar", "tr"
+    score = Column(Float) # امتیاز هوش مصنوعی
 
     # محتوای ترجمه شده
     title_translated = Column(String(512))

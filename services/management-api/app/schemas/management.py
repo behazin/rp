@@ -40,6 +40,7 @@ class PostTranslationBase(BaseModel):
     content_telegram: Optional[str] = None
     content_instagram: Optional[str] = None
     content_twitter: Optional[str] = None
+    score: Optional[float] = None #
 
 class PostTranslationInDB(PostTranslationBase):
     id: int
@@ -54,7 +55,6 @@ class PostBase(BaseModel):
     url_original: Optional[HttpUrl] = None
     # --- END: بخش اضافه شده ---
     image_urls_original: Optional[List[HttpUrl]] = []
-    score: Optional[float] = None
 
 class PostCreate(PostBase):
     source_id: int
