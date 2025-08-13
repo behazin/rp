@@ -3,3 +3,4 @@ python-dotenv
 python-json-logger
 requests
 google-genai
+pydantic
