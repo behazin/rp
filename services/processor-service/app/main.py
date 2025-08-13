@@ -1,5 +1,6 @@
-# FILE: ./services/processor-service/app/main.py
+# FILE: ./services/processor-service/app/main.py  (single-pass unified variant)
 # Updated for latest Google Gen AI SDK (google-genai): structured JSON output + client.models.generate_content
+# Single-pass mode: translate title + translate content + telegram summary + quality score in ONE call.
 
 import logging
 import os
@@ -29,7 +30,7 @@ MANAGEMENT_API_URL = os.getenv("MANAGEMENT_API_URL", "http://management-api:8000
 # The SDK auto-detects GEMINI_API_KEY or GOOGLE_API_KEY from env
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
 
-# ---- Logging: FIXED (no arg to setup_logging) ----
+# ---- Logging ----
 setup_logging()
 logger = logging.getLogger("processor-service")
 
@@ -43,6 +44,16 @@ class Translation(BaseModel):
 class TelegramSummary(BaseModel):
     summary: str
 
+# NEW: unified one-shot schema
+class UnifiedOutput(BaseModel):
+    title_translated: str
+    content_translated: str
+    content_telegram: str
+    quality_score: float  # 0..100
+
+# Toggle single-pass behavior
+SINGLE_PASS = True  # set False to use the previous two-call flow
+
 # ---------------------------
 # Gemini Client
 # ---------------------------
@@ -54,10 +65,10 @@ except Exception as e:
     logger.critical(f"❌ Failed to initialize Gemini client: {e}", exc_info=True)
 
 # ---------------------------
-# Prompts (JSON shape enforced by response_schema)
+# Prompts (for two-call flow; kept intact)
 # ---------------------------
 TRANSLATE_PROMPT = (
-"You are a professional editor and translator tasked with translating English tech news into Persian.\n"
+    "You are a professional editor and translator tasked with translating English tech news into Persian.\n"
     "Your instructions are:\n"
     "1. First, analyze the **Content** field. You MUST 'clean' it by completely removing any text that is not part of the main article, such as advertisements, event promotions, or author bios.\n"
     "2. Second, translate the original **Title** and the now-cleaned **Content** into fluent Persian.\n"
@@ -100,7 +111,7 @@ def save_translation(post_id: int, translation_data: dict):
         return None
 
 # ---------------------------
-# Core processing
+# Core processing helpers
 # ---------------------------
 def _safety_settings():
     # tune as needed for prod
@@ -143,7 +154,6 @@ def translate_with_gemini(title: str, content: str) -> Translation:
     obj: Translation = resp.parsed  # Parsed via schema
     if obj:
         return obj
-    # Fallback if schema parsing failed
     data = json.loads(resp.text)
     return Translation(**data)
 
@@ -167,8 +177,56 @@ def summarize_for_telegram(title_fa: str, content_fa: str, max_chars: int = 1000
     obj: TelegramSummary = resp.parsed
     return obj.summary.strip() if (obj and obj.summary) else resp.text.strip()
 
+# --- NEW: one-shot translate + summarize + score ---
+def translate_summarize_score(
+    title: str,
+    content: str,
+    max_chars: int = 1000,
+    model: str = "gemini-2.5-pro",
+) -> UnifiedOutput:
+    if not client:
+        raise RuntimeError("Gemini client not initialized")
+
+    sys_instruction = (
+        "You are a professional Persian translator, editor, and copywriter. "
+        "Return ONLY JSON with fields: title_translated (string), content_translated (string), content_telegram (string), quality_score (number). "
+        "Requirements: "
+        "1) Clean the content by removing non-article text (ads/promos/bios). "
+        "2) Translate title and cleaned content to Persian; preserve original paragraph breaks and line feeds exactly. "
+        f"3) Write content_telegram as a concise Persian summary of the translated content, max {max_chars} characters, no emojis or markdown. "
+        "4) quality_score in [0,100] reflecting fidelity and clarity; use a dot for decimals."
+    )
+
+    prompt = (
+        'Translate and summarize the following English tech news.\n\n'
+        f'**Title:** "{title or ""}"\n'
+        f'**Content:** "{content or ""}"'
+    )
+
+    resp = client.models.generate_content(
+        model=model,
+        contents=prompt,
+        config=types.GenerateContentConfig(
+            system_instruction=sys_instruction,
+            response_mime_type="application/json",
+            response_schema=UnifiedOutput,
+            temperature=0.2,
+            safety_settings=_safety_settings(),
+        ),
+    )
+
+    obj: UnifiedOutput = resp.parsed
+    if obj:
+        return obj
+    data = json.loads(resp.text)
+    return UnifiedOutput(**data)
+
+# ---------------------------
+# Pipeline
+# ---------------------------
 def process_post_with_ai(post_details: dict):
-    """Main pipeline: translate EN->FA then create Telegram summary, send to management-api."""
+    """Main pipeline: (single-pass) translate EN->FA + telegram summary + score, then send to management-api.
+       If SINGLE_PASS=False, falls back to the previous 2-call approach."""
     post_id = post_details.get("id")
     title = post_details.get("title_original")
     content = post_details.get("content_original")
@@ -178,17 +236,24 @@ def process_post_with_ai(post_details: dict):
         return
 
     try:
-        # 1) Translate
-        logger.info(f"Translating post_id={post_id}")
-        translation = translate_with_gemini(title, content)
+        if SINGLE_PASS:
+            logger.info(f"One-shot translate+summary+score, post_id={post_id}")
+            u = translate_summarize_score(title, content, max_chars=1000, model="gemini-2.5-pro")
+            title_fa = u.title_translated
+            content_fa = u.content_translated
+            telegram_summary = u.content_telegram
+            logger.info(f"quality_score={u.quality_score}")
+        else:
+            # 2-call flow (legacy)
+            logger.info(f"Translating post_id={post_id}")
+            translation = translate_with_gemini(title, content)
+            title_fa = translation.title_translated
+            content_fa = translation.content_translated
 
-        # 2) Summarize for Telegram
-        logger.info(f"Summarizing for Telegram, post_id={post_id}")
-        telegram_summary = summarize_for_telegram(
-            translation.title_translated, translation.content_translated, max_chars=1000
-        )
+            logger.info(f"Summarizing for Telegram, post_id={post_id}")
+            telegram_summary = summarize_for_telegram(title_fa, content_fa, max_chars=1000)
 
-        # 3) Build payload and persist
+        # Featured image (unchanged)
         featured_image_url = None
         try:
             imgs = post_details.get("image_urls_original") or []
@@ -199,12 +264,13 @@ def process_post_with_ai(post_details: dict):
 
         final_data = {
             "language": "fa",
-            "title_translated": translation.title_translated,
-            "content_translated": translation.content_translated,
+            "title_translated": title_fa,
+            "content_translated": content_fa,
             "content_telegram": telegram_summary,
-            "featured_image_url": featured_image_url,
             "content_instagram": "NULL",
             "content_twitter": "NULL",
+            "featured_image_url": featured_image_url,
+            "score": u.quality_score if SINGLE_PASS else None,
         }
         save_translation(post_id, final_data)
 
