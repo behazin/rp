@@ -194,7 +194,7 @@ def translate_summarize_score(
         "1) Clean the content by removing non-article text (ads/promos/bios). "
         "2) Translate title and cleaned content to Persian; preserve original paragraph breaks and line feeds exactly. "
         f"3) Write content_telegram as a concise Persian summary of the translated content, max {max_chars} characters, no emojis or markdown. "
-        "4) quality_score in [0,100] reflecting fidelity and clarity; use a dot for decimals."
+        "4) quality_score in [0,10] reflecting fidelity and clarity; use a dot for decimals."
     )
 
     prompt = (
