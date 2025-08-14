@@ -183,6 +183,19 @@ def approve_post(post_id: int, db: Session = Depends(get_db)):
     db.refresh(db_post)
     return db_post
 
+@router.post("/posts/{post_id}/pending", response_model=schemas.PostInDB)
+def set_post_status_to_pending(post_id: int, db: Session = Depends(get_db)):
+    """وضعیت یک پست را به 'pending_approval' تغییر می‌دهد."""
+    db_post = db.query(models.Post).filter(models.Post.id == post_id).first()
+    if not db_post:
+        raise HTTPException(status_code=404, detail="Post not found")
+    
+    db_post.status = models.PostStatus.PENDING_APPROVAL
+    db.commit()
+    db.refresh(db_post)
+    logger.info(f"Post {post_id} status changed to PENDING_APPROVAL by Telegram Manager.")
+    return db_post
+
 @router.get("/posts/{post_id}", response_model=schemas.PostInDB)
 def get_post(post_id: int, db: Session = Depends(get_db)):
     """اطلاعات یک پست مشخص را بر اساس شناسه آن برمی‌گرداند."""

@@ -36,7 +36,7 @@ def mark_as_pending_approval(post_id: int):
     """Marks a post as PENDING_APPROVAL after sending it to the admin."""
     try:
         # نام این تابع در management.py همچنان mark_post_as_pending است
-        response = requests.post(f"{MANAGEMENT_API_URL}/posts/{post_id}/sent_to_admin")
+        response = requests.post(f"{MANAGEMENT_API_URL}/posts/{post_id}/pending")
         response.raise_for_status()
         return True
     except requests.exceptions.RequestException as e:
@@ -54,7 +54,7 @@ def send_approval_request(bot, post):
     text = f"📰 **پست جدید برای تایید**\n\n"
     text += f"**شناسه:** `{post_id}`\n"
     text += f"**عنوان:** {title}\n\n"
-    text += f"**خلاصه:**\n{summary}..."
+    text += f"**خلاصه:**\n{summary}"
     
     keyboard = [[
         InlineKeyboardButton("✅ تایید", callback_data=f"approve_{post_id}"),
@@ -87,23 +87,34 @@ def send_approval_request(bot, post):
         return False
 
 def button_callback(update, context):
-    # ... (این تابع بدون تغییر باقی می‌ماند) ...
+    """Handles button clicks for approve/reject."""
     query = update.callback_query
-    query.answer()
+    query.answer()  # پاسخ به تلگرام برای بستن انیمیشن لودینگ دکمه
+    
     action, post_id_str = query.data.split("_")
     post_id = int(post_id_str)
+    
     api_url = f"{MANAGEMENT_API_URL}/posts/{post_id}/{action}"
+
     try:
         response = requests.post(api_url)
         response.raise_for_status()
+        
+        # انتخاب متن پاسخ بر اساس موفقیت عملیات
         if action == "approve":
-            query.edit_message_text(text=f"✅ پست شماره {post_id} با موفقیت تایید شد.")
+            response_text = f"✅ پست شماره {post_id} با موفقیت تایید شد."
             logger.info(f"Admin approved post_id: {post_id}")
-        elif action == "reject":
-            query.edit_message_text(text=f"❌ پست شماره {post_id} رد شد.")
+        else: # action == "reject"
+            response_text = f"❌ پست شماره {post_id} رد شد."
             logger.info(f"Admin rejected post_id: {post_id}")
+
+        # از edit_message_caption برای ویرایش کپشن عکس استفاده می‌کنیم
+        query.edit_message_caption(caption=response_text)
+
     except requests.exceptions.RequestException as e:
-        query.edit_message_text(text=f"⚠️ خطا در پردازش درخواست برای پست {post_id}. Error: {e}")
+        error_text = f"⚠️ خطا در پردازش درخواست برای پست {post_id}."
+        # در صورت بروز خطا نیز کپشن را ویرایش می‌کنیم تا به کاربر اطلاع داده شود
+        query.edit_message_caption(caption=error_text)
         logger.error(f"API call failed for post_id {post_id}, action {action}. Error: {e}")
 
 def check_and_send_job(bot):
