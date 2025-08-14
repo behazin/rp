@@ -136,3 +136,21 @@ services:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
+
+telegram-manager:
+    build:
+      context: ./services/telegram-manager
+      dockerfile: Dockerfile
+    container_name: telegram-manager
+    env_file: .env
+    restart: unless-stopped
+    volumes:
+      - ./services/telegram-manager/app:/usr/src/app/app
+      - ./common:/usr/src/app/common
+    environment:
+      - PYTHONPATH=/usr/src/app
+    networks:
+      - robopost_network
+    depends_on:
+      management-api:
+        condition: service_healthy        

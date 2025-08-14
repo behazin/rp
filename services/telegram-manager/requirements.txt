@@ -1,0 +1,6 @@
+# FILE: ./services/telegram-manager/requirements.txt
+python-telegram-bot==13.15
+requests
+python-dotenv
+python-json-logger
+schedule
