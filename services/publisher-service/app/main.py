@@ -45,7 +45,7 @@ def get_source_with_destinations(source_id: int):
 
 
 def publish_to_telegram(destination: dict, post_translation: dict, post_url: str):
-    """یک پست را به یک مقصد تلگرامی مشخص ارسال می‌کند."""
+    """یک پست را به همراه تصویر شاخص (در صورت وجود) به یک مقصد تلگرامی ارسال می‌کند."""
     bot_token = destination.get("credentials", {}).get("bot_token")
     chat_id = destination.get("credentials", {}).get("chat_id")
 
@@ -55,26 +55,44 @@ def publish_to_telegram(destination: dict, post_translation: dict, post_url: str
 
     try:
         bot = telegram.Bot(token=bot_token)
+        
+        # --- START: بخش کلیدی اصلاح شده ---
+        
         RLM = "\u200f"
         title = RLM + post_translation.get('title_translated', '')
+        
+        # ۱. متن خلاصه‌شده تلگرام (content_telegram) به درستی خوانده می‌شود
         raw_content = post_translation.get('content_telegram', '')
         paragraphs = [RLM + p.strip() for p in raw_content.split('\n') if p.strip()]
         content = "\n".join(paragraphs)
         
-        # ساختار نهایی پیام
-        message = (
+        # ۲. تصویر شاخص (featured_image_url) استخراج می‌شود
+        featured_image_url = post_translation.get('featured_image_url')
+
+        # متن نهایی برای کپشن یا پیام آماده می‌شود
+        final_text = (
             f"*{title}*\n\n"
             f"{content}\n\n"
-            f"[Read More]({post_url})"
+            f"@DigiPali"
         )
 
-
-        bot.send_message(
-            chat_id=chat_id,
-            text=message,
-            parse_mode=telegram.ParseMode.MARKDOWN,
-            disable_web_page_preview=False
-        )
+        # ۳. بر اساس وجود تصویر، متد مناسب تلگرام فراخوانی می‌شود
+        if featured_image_url:
+            # اگر تصویر وجود دارد، عکس به همراه کپشن ارسال می‌شود
+            bot.send_photo(
+                chat_id=chat_id,
+                photo=featured_image_url,
+                caption=final_text,
+                parse_mode=telegram.ParseMode.MARKDOWN
+            )
+        else:
+            # در غیر این صورت، پیام متنی ساده ارسال می‌شود
+            bot.send_message(
+                chat_id=chat_id,
+                text=final_text,
+                parse_mode=telegram.ParseMode.MARKDOWN,
+                disable_web_page_preview=False
+            )
         logger.info(f"Successfully published to Telegram destination: {destination.get('name')}")
         return True
     except Exception as e:
