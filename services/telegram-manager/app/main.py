@@ -27,8 +27,9 @@ def get_posts_for_admin_review():
         response = requests.get(f"{MANAGEMENT_API_URL}/posts/fetched")
         response.raise_for_status()
         return response.json()
-    except requests.exceptions.RequestException as e:
-        logger.error(f"Could not fetch posts for admin review. Error: {e}")
+    except requests.HTTPError as e:
+        body = e.response.text if getattr(e, "response", None) else ""
+        logger.error(f"Could not fetch posts for admin review. {e}. Body: {body}")
         return []
 
 def mark_as_pending_approval(post_id: int):

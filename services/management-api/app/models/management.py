@@ -72,18 +72,12 @@ class PostTranslation(Base):
     __tablename__ = "post_translations"
     id = Column(Integer, primary_key=True, index=True)
     post_id = Column(Integer, ForeignKey("posts.id"), nullable=False)
-    
     language = Column(String(5), nullable=False) # e.g., "fa", "ar", "tr"
     score = Column(Float) # امتیاز هوش مصنوعی
-
-    # محتوای ترجمه شده
     title_translated = Column(String(512))
     content_translated = Column(Text)
     featured_image_url = Column(String(2048))
-
-    # محتوای آماده برای هر پلتفرم
     content_telegram = Column(String(1024))
     content_instagram = Column(Text)
     content_twitter = Column(String(280))
-
     post = relationship("Post", back_populates="translations")
