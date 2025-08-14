@@ -102,16 +102,34 @@ def link_source_to_destination(source_id: int, destination_id: int, db: Session 
 # --- مدیریت پست‌ها (Posts) ---
 @router.post("/posts", response_model=schemas.PostInDB, status_code=201)
 def create_post(post: schemas.PostCreate, db: Session = Depends(get_db)):
-    post_data = post.model_dump(exclude_unset=True)
-    if 'url_original' in post_data and post_data['url_original'] is not None:
-        post_data['url_original'] = str(post_data['url_original'])
-    if 'image_urls_original' in post_data and post_data.get('image_urls_original'):
-        post_data['image_urls_original'] = [str(url) for url in post_data['image_urls_original']]
+    # از داده‌های ورودی، لیست URLهای تصاویر را جدا می‌کنیم
+    image_urls = post.image_urls_original or []
+    
+    # یک دیکشنری از داده‌های پست بدون لیست تصاویر می‌سازیم
+    post_data_dict = post.model_dump(exclude={"image_urls_original"})
 
-    new_post = models.Post(**post_data)
+    # اطمینان از اینکه url_original به صورت رشته ذخیره می‌شود
+    if 'url_original' in post_data_dict and post_data_dict['url_original'] is not None:
+        post_data_dict['url_original'] = str(post_data_dict['url_original'])
+
+    # ابتدا آبجکت پست اصلی را ایجاد می‌کنیم
+    new_post = models.Post(**post_data_dict)
     db.add(new_post)
+    
+    # تغییر کلیدی: آبجکت را flush می‌کنیم تا new_post.id در همین session در دسترس قرار گیرد
+    db.flush()
+
+    # حالا برای هر URL تصویر، یک آبجکت PostImage می‌سازیم و به پست متصل می‌کنیم
+    for img_url in image_urls:
+        new_image = models.PostImage(url=str(img_url), post_id=new_post.id)
+        db.add(new_image)
+
+    # در نهایت تمام تغییرات (پست و تصاویر) را به صورت یکجا در دیتابیس commit می‌کنیم
     db.commit()
+    
+    # آبجکت پست را refresh می‌کنیم تا رابطه جدید 'images' در آن بارگذاری شود
     db.refresh(new_post)
+    
     return new_post
 
 

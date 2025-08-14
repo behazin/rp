@@ -252,15 +252,16 @@ def process_post_with_ai(post_details: dict):
 
             logger.info(f"Summarizing for Telegram, post_id={post_id}")
             telegram_summary = summarize_for_telegram(title_fa, content_fa, max_chars=1000)
-
-        # Featured image (unchanged)
         featured_image_url = None
         try:
-            imgs = post_details.get("image_urls_original") or []
-            if isinstance(imgs, list) and imgs:
-                featured_image_url = imgs[0]
+            # از ساختار جدید 'images' که لیستی از آبجکت‌هاست استفاده می‌کنیم
+            images_list = post_details.get("images") or []
+            if isinstance(images_list, list) and images_list:
+                # اولین تصویر از لیست جدید را به عنوان تصویر شاخص انتخاب می‌کنیم
+                featured_image_url = images_list[0].get("url")
         except Exception:
             featured_image_url = None
+
 
         final_data = {
             "language": "fa",
