@@ -42,6 +42,7 @@ class Destination(Base):
 
 # --- مدل‌های مربوط به پست و ترجمه‌ها ---
 class PostStatus(str, enum.Enum):
+    FETCHED = "fetched" 
     PENDING_APPROVAL = "pending_approval"
     APPROVED = "approved"
     PUBLISHED = "published"
@@ -54,7 +55,7 @@ class Post(Base):
     source_id = Column(Integer, ForeignKey("sources.id"))
     
     # ستون‌های مدیریتی و متادیتا
-    status = Column(Enum(PostStatus), default=PostStatus.PENDING_APPROVAL, nullable=False)
+    status = Column(Enum(PostStatus), default=PostStatus.FETCHED, nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now()) # تاریخ ایجاد خودکار
     admin_chat_id = Column(String(255)) # شناسه چت مدیر
     admin_message_id = Column(String(255)) # شناسه پیام مدیریتی
