@@ -130,7 +130,7 @@ def fetch_job():
 
         new_posts_found = 0
 
-        for entry in feed.entries:
+        for entry in feed.entries[:30]:
             post_url = entry.get("link")
             if not is_http_url(post_url):
                 logger.debug(f"Skipping entry with invalid link: {post_url}")
