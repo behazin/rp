@@ -56,6 +56,14 @@ class PostBase(BaseModel):
     # --- END: بخش اضافه شده ---
     image_urls_original: Optional[List[HttpUrl]] = []
 
+class PostImageBase(BaseModel):
+    url: HttpUrl
+
+class PostImageInDB(PostImageBase):
+    id: int
+    post_id: int
+    model_config = ConfigDict(from_attributes=True)
+
 class PostCreate(PostBase):
     source_id: int
 
@@ -65,6 +73,7 @@ class PostInDB(PostBase):
     status: PostStatus
     created_at: datetime
     translations: List[PostTranslationInDB] = []
+    images: List[PostImageInDB] = []
     model_config = ConfigDict(from_attributes=True)
 
 # --- اسکماهای نهایی برای نمایش روابط ---

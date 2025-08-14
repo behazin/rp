@@ -145,6 +145,22 @@ def get_pending_posts(skip: int = 0, limit: int = 100, db: Session = Depends(get
     posts = db.query(models.Post).filter(models.Post.status == models.PostStatus.PENDING_APPROVAL).offset(skip).limit(limit).all()
     return posts
 
+@router.get("/posts/fetched", response_model=List[schemas.PostInDB])
+def get_fetched_posts(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
+    """
+    لیست پست‌های تازه فچ شده که پردازش اولیه آن‌ها (ترجمه) انجام شده 
+    و آماده ارسال برای مدیر هستند را برمی‌گرداند.
+    """
+    posts = (
+        db.query(models.Post)
+        .join(models.Post.translations)  # <-- اتصال به جدول ترجمه‌ها
+        .filter(models.Post.status == models.PostStatus.FETCHED)
+        .offset(skip)
+        .limit(limit)
+        .all()
+    )
+    return posts
+
 @router.post("/posts/{post_id}/approve", response_model=schemas.PostInDB)
 def approve_post(post_id: int, db: Session = Depends(get_db)):
     """یک پست را تایید می‌کند، وضعیت آن را به 'approved' تغییر می‌دهد و پیامی به RabbitMQ ارسال می‌کند."""
@@ -174,22 +190,6 @@ def get_post(post_id: int, db: Session = Depends(get_db)):
     if not db_post:
         raise HTTPException(status_code=404, detail="Post not found")
     return db_post
-
-@router.get("/posts/fetched", response_model=List[schemas.PostInDB])
-def get_fetched_posts(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
-    """
-    لیست پست‌های تازه فچ شده که پردازش اولیه آن‌ها (ترجمه) انجام شده 
-    و آماده ارسال برای مدیر هستند را برمی‌گرداند.
-    """
-    posts = (
-        db.query(models.Post)
-        .join(models.Post.translations)  # <-- اتصال به جدول ترجمه‌ها
-        .filter(models.Post.status == models.PostStatus.FETCHED)
-        .offset(skip)
-        .limit(limit)
-        .all()
-    )
-    return posts
 
 @router.post("/posts/{post_id}/translations", response_model=schemas.PostTranslationInDB, status_code=201)
 def create_translation_for_post(post_id: int, translation: schemas.PostTranslationCreate, db: Session = Depends(get_db)):

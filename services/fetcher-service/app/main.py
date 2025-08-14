@@ -1,7 +1,3 @@
-# FILE: ./services/fetcher-service/app/main.py
-# Fetcher service: fetch RSS/links, extract article content/images, and create posts via management-api.
-# This version adds strict URL filtering so only http/https URLs are sent in `image_urls_original` (fixes 422).
-
 import schedule
 import time
 import logging
@@ -155,9 +151,10 @@ def fetch_job():
                     logger.warning(f"Newspaper3k could not extract main content from {post_url}. Skipping.")
                     continue
 
-                # Extract images and filter
-                images = list(set(article.images or []))
-                images = [u for u in images if is_http_url(u)]
+                top_image_url = article.top_image
+                images = [] # همیشه یک لیست ارسال می‌کنیم، حتی اگر خالی باشد
+                if top_image_url and is_http_url(top_image_url):
+                    images.append(top_image_url)
 
                 post_data = {
                     "source_id": source_id,

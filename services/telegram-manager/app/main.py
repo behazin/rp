@@ -46,8 +46,10 @@ def mark_as_pending_approval(post_id: int):
 def send_approval_request(bot, post):
     # ... (این تابع بدون تغییر باقی می‌ماند) ...
     post_id = post.get('id')
-    title = post.get('translations')[0].get('title_translated') if post.get('translations') else post.get('title_original')
-    summary = post.get('translations')[0].get('content_telegram') if post.get('translations') else post.get('content_original', '')[:200]
+    translation = post.get('translations')[0] if post.get('translations') else {}
+    title = translation.get('title_translated') or post.get('title_original')
+    summary = translation.get('content_telegram') or post.get('content_original', '')[:200]
+    featured_image_url = translation.get('featured_image_url')
     
     text = f"📰 **پست جدید برای تایید**\n\n"
     text += f"**شناسه:** `{post_id}`\n"
@@ -61,12 +63,23 @@ def send_approval_request(bot, post):
     reply_markup = InlineKeyboardMarkup(keyboard)
     
     try:
-        bot.send_message(
-            chat_id=TELEGRAM_ADMIN_CHAT_ID, 
-            text=text, 
-            parse_mode="Markdown",
-            reply_markup=reply_markup
-        )
+        if featured_image_url:
+            # اگر تصویر شاخص وجود دارد، از send_photo استفاده می‌کنیم
+            bot.send_photo(
+                chat_id=TELEGRAM_ADMIN_CHAT_ID,
+                photo=featured_image_url,
+                caption=text,
+                parse_mode="Markdown",
+                reply_markup=reply_markup
+            )
+        else:
+            # در غیر این صورت، پیام متنی ساده ارسال می‌شود
+            bot.send_message(
+                chat_id=TELEGRAM_ADMIN_CHAT_ID, 
+                text=text, 
+                parse_mode="Markdown",
+                reply_markup=reply_markup
+            )
         logger.info(f"Sent post_id {post_id} for approval.")
         return True
     except Exception as e:
