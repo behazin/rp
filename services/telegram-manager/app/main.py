@@ -45,27 +45,61 @@ def mark_as_pending_approval(post_id: int):
         return False
 
 def send_approval_request(bot, post):
+    """یک پست را برای ادمین ارسال می‌کند و در صورت نامعتبر بودن عکس، به حالت متنی بازمی‌گردد."""
     post_id = post.get('id')
     translation = post.get('translations')[0] if post.get('translations') else {}
     title = translation.get('title_translated') or post.get('title_original')
     summary = translation.get('content_telegram') or post.get('content_original', '')[:200]
     featured_image_url = translation.get('featured_image_url')
+    
     text = f"📰 **پست جدید برای تایید**\n\n"
     text += f"**شناسه:** `{post_id}`\n"
     text += f"**عنوان:** {title}\n\n"
     text += f"**خلاصه:**\n{summary}..."
+    
     keyboard = [[
         InlineKeyboardButton("✅ تایید", callback_data=f"approve_{post_id}"),
         InlineKeyboardButton("❌ رد", callback_data=f"reject_{post_id}"),
     ]]
     reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    sent_message = None
     try:
-        sent_message = None
         if featured_image_url:
-            sent_message = bot.send_photo(chat_id=TELEGRAM_ADMIN_CHAT_ID, photo=featured_image_url, caption=text, parse_mode="Markdown", reply_markup=reply_markup)
+            try:
+                # ۱. تلاش اولیه برای ارسال با عکس
+                sent_message = bot.send_photo(
+                    chat_id=TELEGRAM_ADMIN_CHAT_ID,
+                    photo=featured_image_url,
+                    caption=text,
+                    parse_mode="Markdown",
+                    reply_markup=reply_markup
+                )
+            except telegram.error.BadRequest as e:
+                # ۲. اگر خطا مربوط به محتوای نامعتبر بود، به حالت متنی بازمی‌گردیم
+                if 'Wrong type of the web page content' in str(e):
+                    logger.warning(f"Invalid image URL for post_id {post_id}. Sending as text. URL: {featured_image_url}")
+                    sent_message = bot.send_message(
+                        chat_id=TELEGRAM_ADMIN_CHAT_ID,
+                        text=text,
+                        parse_mode="Markdown",
+                        reply_markup=reply_markup
+                    )
+                else:
+                    # اگر خطای دیگری بود، آن را دوباره ایجاد می‌کنیم تا مدیریت شود
+                    raise e
         else:
-            sent_message = bot.send_message(chat_id=TELEGRAM_ADMIN_CHAT_ID, text=text, parse_mode="Markdown", reply_markup=reply_markup)
+            # اگر از ابتدا تصویری وجود نداشت
+            sent_message = bot.send_message(
+                chat_id=TELEGRAM_ADMIN_CHAT_ID, 
+                text=text, 
+                parse_mode="Markdown",
+                reply_markup=reply_markup
+            )
+
         logger.info(f"Sent post_id {post_id} for approval.")
+        
+        # ۳. اطلاعات پیام (چه با عکس چه بی عکس) را ذخیره می‌کنیم
         if sent_message:
             info_payload = {"admin_chat_id": sent_message.chat_id, "admin_message_id": sent_message.message_id}
             try:
@@ -73,10 +107,12 @@ def send_approval_request(bot, post):
                 logger.info(f"Successfully saved admin message info for post_id {post_id}.")
             except requests.exceptions.RequestException as e:
                 logger.error(f"Failed to save admin message info for post_id {post_id}. Error: {e}")
+                
         return True
     except Exception as e:
         logger.error(f"Failed to send post_id {post_id} to admin. Error: {e}")
         return False
+
 
 def button_callback(update, context):
     query = update.callback_query
@@ -87,16 +123,23 @@ def button_callback(update, context):
     try:
         response = requests.post(api_url)
         response.raise_for_status()
+
+        # --- START: بخش کلیدی اصلاح شده ---
         if action == "approve":
             response_text = f"✅ پست شماره {post_id} با موفقیت تایید شد."
             logger.info(f"Admin approved post_id: {post_id}")
-        else:
-            response_text = f"❌ پست شماره {post_id} رد شد."
+            # فقط در صورت تایید، کپشن را ویرایش می‌کنیم
+            if query.message.photo:
+                query.edit_message_caption(caption=response_text)
+            else:
+                query.edit_message_text(text=response_text)
+
+        elif action == "reject":
+            # در صورت رد کردن، فقط لاگ می‌اندازیم و منتظر حذف پیام از طریق RabbitMQ می‌مانیم
             logger.info(f"Admin rejected post_id: {post_id}")
-        if query.message.photo:
-            query.edit_message_caption(caption=response_text)
-        else:
-            query.edit_message_text(text=response_text)
+            # هیچ ویرایشی روی پیام انجام نمی‌شود
+        # --- END: پایان بخش اصلاح شده ---
+
     except requests.exceptions.RequestException as e:
         error_text = f"⚠️ خطا در پردازش درخواست برای پست {post_id}."
         if query.message.photo:

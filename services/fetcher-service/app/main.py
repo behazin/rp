@@ -151,10 +151,23 @@ def fetch_job():
                     logger.warning(f"Newspaper3k could not extract main content from {post_url}. Skipping.")
                     continue
 
-                top_image_url = article.top_image
-                images = [] # همیشه یک لیست ارسال می‌کنیم، حتی اگر خالی باشد
-                if top_image_url and is_http_url(top_image_url):
-                    images.append(top_image_url)
+                image_url = None
+                
+                # مرحله ۱: تلاش با trafilatura (روش دقیق‌تر)
+                metadata = trafilatura.extract_metadata(article.html)
+                if metadata and metadata.image:
+                    image_url = metadata.image
+
+                # مرحله ۲: اگر روش اول ناموفق بود، از newspaper3k استفاده می‌کنیم
+                if not image_url:
+                    image_url = article.top_image
+
+                # اعتبارسنجی نهایی URL و آماده‌سازی لیست برای ارسال
+                images = []
+                if image_url and is_http_url(image_url):
+                    images.append(image_url)
+                # --- END: پایان بخش اصلاح شده ---
+                # ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
                 post_data = {
                     "source_id": source_id,
