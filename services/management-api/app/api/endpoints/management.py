@@ -163,6 +163,19 @@ def get_pending_posts(skip: int = 0, limit: int = 100, db: Session = Depends(get
     posts = db.query(models.Post).filter(models.Post.status == models.PostStatus.PENDING_APPROVAL).offset(skip).limit(limit).all()
     return posts
 
+@router.post("/posts/{post_id}/admin-message-info", response_model=schemas.PostInDB)
+def set_admin_message_info(post_id: int, info: schemas.AdminMessageInfoUpdate, db: Session = Depends(get_db)):
+    """شناسه چت و پیام ادمین را برای یک پست ذخیره می‌کند."""
+    db_post = db.query(models.Post).filter(models.Post.id == post_id).first()
+    if not db_post:
+        raise HTTPException(status_code=404, detail="Post not found")
+    
+    db_post.admin_chat_id = str(info.admin_chat_id)
+    db_post.admin_message_id = str(info.admin_message_id)
+    db.commit()
+    db.refresh(db_post)
+    return db_post
+
 @router.get("/posts/fetched", response_model=List[schemas.PostInDB])
 def get_fetched_posts(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
     """

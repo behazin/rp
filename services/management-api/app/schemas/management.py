@@ -67,6 +67,10 @@ class PostImageInDB(PostImageBase):
 class PostCreate(PostBase):
     source_id: int
 
+class AdminMessageInfoUpdate(BaseModel):
+    admin_chat_id: int
+    admin_message_id: int
+
 class PostInDB(PostBase):
     id: int
     source_id: int
