@@ -135,6 +135,39 @@ def check_and_send_job(bot):
     logger.info(f"Sent {sent_count} new posts to admin for review.")
     return sent_count
 
+def on_post_rejected(ch, method, properties, body):
+    """این تابع به محض دریافت پیام از صف 'post_rejected' اجرا می‌شود."""
+    try:
+        message = json.loads(body)
+        post_id = message.get("post_id")
+        chat_id = message.get("admin_chat_id")
+        message_id = message.get("admin_message_id")
+
+        if not all([post_id, chat_id, message_id]):
+            logger.warning("Received invalid 'post_rejected' message. Acking.")
+            ch.basic_ack(delivery_tag=method.delivery_tag)
+            return
+
+        logger.info(f"Received 'post_rejected' event for post_id: {post_id}. Deleting message...")
+        
+        bot = Bot(token=TELEGRAM_ADMIN_BOT_TOKEN)
+        bot.delete_message(chat_id=int(chat_id), message_id=int(message_id))
+        
+        logger.info(f"Successfully deleted admin message for post_id: {post_id}")
+        ch.basic_ack(delivery_tag=method.delivery_tag)
+
+    except Exception as e:
+        logger.error(f"Failed to process 'post_rejected' message: {e}", exc_info=True)
+        # پیام را nack می‌کنیم تا در آینده دوباره تلاش شود
+        ch.basic_nack(delivery_tag=method.delivery_tag)
+
+def start_rejection_listener():
+    """یک ترد جداگانه برای گوش دادن به صف rejectها راه‌اندازی می‌کند."""
+    logger.info("Starting RabbitMQ listener for rejected posts...")
+    with RabbitMQClient() as client:
+        client.channel.queue_declare(queue=REJECTED_QUEUE_NAME, durable=True)
+        client.start_consuming(queue_name=REJECTED_QUEUE_NAME, callback=on_post_rejected)
+
 
 def main():
     logger.info("--- 🛂 Telegram Manager Service Started ---")

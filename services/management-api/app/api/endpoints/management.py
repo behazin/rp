@@ -72,13 +72,31 @@ def delete_destination(destination_id: int, db: Session = Depends(get_db)):
 
 @router.post("/posts/{post_id}/reject", response_model=schemas.PostInDB)
 def reject_post(post_id: int, db: Session = Depends(get_db)):
-    """یک پست را رد می‌کند و وضعیت آن را به 'rejected' تغییر می‌دهد."""
+    """یک پست را رد می‌کند، وضعیت آن را تغییر می‌دهد و یک رویداد 'post_rejected' منتشر می‌کند."""
     db_post = db.query(models.Post).filter(models.Post.id == post_id).first()
     if not db_post:
         raise HTTPException(status_code=404, detail="Post not found")
     
+    # ۱. وضعیت پست در دیتابیس تغییر می‌کند
     db_post.status = models.PostStatus.REJECTED
     db.commit()
+    
+    # ۲. یک رویداد برای اطلاع‌رسانی به سرویس‌های دیگر منتشر می‌شود
+    if db_post.admin_chat_id and db_post.admin_message_id:
+        try:
+            with RabbitMQClient() as client:
+                queue_name = 'post_rejected_queue'
+                message_body = json.dumps({
+                    "post_id": db_post.id,
+                    "admin_chat_id": db_post.admin_chat_id,
+                    "admin_message_id": db_post.admin_message_id
+                })
+                client.channel.queue_declare(queue=queue_name, durable=True)
+                client.publish(exchange_name="", routing_key=queue_name, body=message_body)
+                logger.info(f"Published 'post_rejected' event for post_id: {post_id}")
+        except Exception as e:
+            logger.error(f"Failed to publish 'post_rejected' event for post_id: {post_id}. Error: {e}")
+            
     db.refresh(db_post)
     return db_post
 
