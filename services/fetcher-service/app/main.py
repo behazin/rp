@@ -6,6 +6,7 @@ import requests
 import feedparser
 import json
 from urllib.parse import urlparse
+import trafilatura
 from newspaper import Article
 from dotenv import load_dotenv
 from common.logging_config import setup_logging

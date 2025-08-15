@@ -51,9 +51,14 @@ def send_approval_request(bot, post):
     title = translation.get('title_translated') or post.get('title_original')
     summary = translation.get('content_telegram') or post.get('content_original', '')[:200]
     featured_image_url = translation.get('featured_image_url')
+    score = translation.get('score')
+
     
     text = f"📰 **پست جدید برای تایید**\n\n"
     text += f"**شناسه:** `{post_id}`\n"
+    if score is not None:
+        # امتیاز را با یک رقم اعشار نمایش می‌دهیم
+        text += f"**امتیاز کیفیت:** {score:.1f}/10\n"
     text += f"**عنوان:** {title}\n\n"
     text += f"**خلاصه:**\n{summary}..."
     
