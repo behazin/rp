@@ -100,22 +100,44 @@ def send_initial_approval_request(bot_instance, post_data):
         return False
 
 def update_message_for_final_approval(bot_instance, post_data):
+    """پیام مدیر را با محتوای پردازش شده و کیبورد هوشمند آپدیت می‌کند."""
     post_id = post_data.get('id')
     admin_chat_id = post_data.get('admin_chat_id')
     admin_message_id = post_data.get('admin_message_id')
     translation = post_data['translations'][0]
 
-    original_text = (f"📰 **پست جدید برای بازبینی**\n\n"
-                     f"**شناسه:** `{post_id}`\n"
-                     f"**امتیاز کیفیت:** {translation.get('score', 0):.1f}/10\n\n"
-                     f"**عنوان:** {translation.get('title_translated')}")
+    # --- START: منطق جدید و هوشمند برای ساخت کیبورد ---
+    base_text = (f"📰 **پست آماده برای تأیید نهایی**\n\n"
+                 f"**شناسه:** `{post_id}`\n"
+                 f"**امتیاز کیفیت:** {translation.get('score', 0):.1f}/10\n\n"
+                 f"**عنوان:** {translation.get('title_translated')}")
 
-    summary = translation.get('content_telegram', 'خلاصه‌ای یافت نشد.')
-    updated_text = f"{original_text}\n\n📝 **خلاصه تلگرام:**\n_{summary}_"
+    # اضافه کردن خلاصه‌های موجود به متن
+    summary_text = ""
+    if translation.get('content_telegram'):
+        summary_text += f"\n\n📝 **خلاصه تلگرام:**\n_{translation.get('content_telegram')}_"
+    # (می‌توانید خلاصه‌های اینستاگرام و توییتر را نیز به همین شکل اضافه کنید)
+    
+    updated_text = base_text + summary_text
 
-    keyboard = [[InlineKeyboardButton("🚀 تأیید نهایی و انتشار", callback_data=f"final_approve_{post_id}")]]
+    # بررسی اینکه کدام پلتفرم‌ها پردازش شده‌اند تا در کنارشان تیک بخورد
+    tg_done = "✅ " if translation.get('content_telegram') else "💬 "
+    ig_done = "✅ " if translation.get('content_instagram') else "📸 "
+    tw_done = "✅ " if translation.get('content_twitter') else "🐦 "
+
+    keyboard = [
+        [InlineKeyboardButton("✅ تأیید کل (همه پلتفرم‌ها)", callback_data=f"process_all_{post_id}")],
+        [
+            InlineKeyboardButton(f"{tg_done}تلگرام", callback_data=f"process_telegram_{post_id}"),
+            InlineKeyboardButton(f"{ig_done}اینستاگرام", callback_data=f"process_instagram_{post_id}"),
+            InlineKeyboardButton(f"{tw_done}توییتر", callback_data=f"process_twitter_{post_id}"),
+        ],
+        [InlineKeyboardButton("🚀 تأیید نهایی و انتشار", callback_data=f"final_approve_{post_id}")], # دکمه جدید
+        [InlineKeyboardButton("❌ رد کردن", callback_data=f"reject_{post_id}")],
+    ]
     reply_markup = InlineKeyboardMarkup(keyboard)
-
+    # --- END: پایان منطق جدید ---
+    
     try:
         if post_data.get('translations')[0].get('featured_image_url'):
             bot_instance.edit_message_caption(chat_id=admin_chat_id, message_id=admin_message_id,
@@ -125,6 +147,7 @@ def update_message_for_final_approval(bot_instance, post_data):
                                          parse_mode="Markdown", reply_markup=reply_markup)
 
         logger.info(f"Updated message for final approval for post_id: {post_id}")
+        # وضعیت را به pending approval تغییر می‌دهیم تا از حلقه پردازش خارج شود
         mark_as_pending_approval(post_id)
     except telegram_error.BadRequest as e:
         if "message is not modified" in str(e):
@@ -201,17 +224,15 @@ def button_callback(update, context):
     query = update.callback_query
     query.answer()
     
-    # --- START: این بخش اصلاح شده است ---
     parts = query.data.split("_")
-    action = "_".join(parts[:-1])  # همه چیز به جز آخرین بخش (مثلا: process_telegram)
-    post_id_str = parts[-1]        # فقط آخرین بخش (که همان شناسه است)
-    # --- END: پایان بخش اصلاح شده ---
-
+    action = "_".join(parts[:-1])
+    post_id_str = parts[-1]
     post_id = int(post_id_str)
 
     if action == "reject":
         try:
             requests.post(f"{MANAGEMENT_API_URL}/posts/{post_id}/reject").raise_for_status()
+            # پیام به صورت خودکار توسط listener حذف خواهد شد
         except requests.exceptions.RequestException as e:
             logger.error(f"Failed to reject post {post_id}. Error: {e}")
 
@@ -219,17 +240,28 @@ def button_callback(update, context):
         platforms = []
         if action == "process_all":
             platforms = ["telegram", "instagram", "twitter"]
-        else: # e.g., "process_telegram"
+        else:
             platforms.append(action.replace("process_", ""))
         
         try:
             requests.post(f"{MANAGEMENT_API_URL}/posts/{post_id}/process-content", json={"platforms": platforms}).raise_for_status()
             text = query.message.caption or query.message.text
-            query.edit_message_reply_markup(reply_markup=None)
+            
+            # --- START: تغییر کلیدی ---
+            # دیگر کیبورد را حذف نمی‌کنیم، فقط متن را آپدیت می‌کنیم
+            # و reply_markup اصلی پیام را دوباره به آن پاس می‌دهیم تا باقی بماند.
             if query.message.caption:
-                query.edit_message_caption(caption=f"{text}\n\n⏳ *در حال پردازش محتوا...*")
+                query.edit_message_caption(
+                    caption=f"{text}\n\n⏳ *در حال پردازش برای: {', '.join(platforms)}...*",
+                    reply_markup=query.message.reply_markup
+                )
             else:
-                query.edit_message_text(text=f"{text}\n\n⏳ *در حال پردازش محتوا...*")
+                query.edit_message_text(
+                    text=f"{text}\n\n⏳ *در حال پردازش برای: {', '.join(platforms)}...*",
+                    reply_markup=query.message.reply_markup
+                )
+            # --- END: پایان تغییر کلیدی ---
+
         except requests.exceptions.RequestException as e:
             context.bot.send_message(chat_id=query.message.chat_id, text=f"⚠️ خطا در درخواست پردازش برای پست {post_id}.")
             logger.error(f"Failed to request content processing for post_id {post_id}. Error: {e}")
@@ -238,6 +270,7 @@ def button_callback(update, context):
         try:
             requests.post(f"{MANAGEMENT_API_URL}/posts/{post_id}/approve").raise_for_status()
             text = query.message.caption or query.message.text
+            # پس از تایید نهایی، کیبورد را حذف می‌کنیم
             query.edit_message_reply_markup(reply_markup=None)
             if query.message.caption:
                 query.edit_message_caption(caption=f"{text}\n\n✅ *تأیید نهایی شد. در صف انتشار قرار گرفت.*")
