@@ -40,8 +40,11 @@ class Destination(Base):
     )
 
 class PostStatus(str, enum.Enum):
-    FETCHED = "fetched" 
+    FETCHED = "fetched"
+    PREPROCESSED = "preprocessed"
     PENDING_APPROVAL = "pending_approval"
+    PROCESSING_CONTENT = "processing_content"
+    READY_FOR_FINAL_APPROVAL = "ready_for_final_approval"
     APPROVED = "approved"
     PUBLISHED = "published"
     REJECTED = "rejected"
@@ -59,7 +62,7 @@ class Post(Base):
     id = Column(Integer, primary_key=True, index=True)
     url_original = Column(String(767), unique=True, index=True)
     source_id = Column(Integer, ForeignKey("sources.id"))
-    status = Column(Enum(PostStatus), default=PostStatus.FETCHED, nullable=False)
+    status = Column(String(50), default=PostStatus.FETCHED.value, nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now()) # تاریخ ایجاد خودکار
     admin_chat_id = Column(String(255)) # شناسه چت مدیر
     admin_message_id = Column(String(255)) # شناسه پیام مدیریتی

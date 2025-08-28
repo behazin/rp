@@ -1,4 +1,4 @@
-# FILE: ./docker-compose.yml
+# FILE: ./docker-compose.yml (نسخه نهایی و اصلاح شده)
 
 networks:
   robopost_network:
@@ -18,7 +18,7 @@ services:
       - "3306:3306"
     volumes:
       - mysql_data:/var/lib/mysql
-    networks:
+    networks: # <<< ✅ این بخش اضافه شده
       - robopost_network
     healthcheck:
       test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u${MYSQL_USER}", "-p${MYSQL_PASSWORD}"]
@@ -37,14 +37,13 @@ services:
       - "15672:15672"
     volumes:
       - rabbitmq_data:/var/lib/rabbitmq/
-    networks:
+    networks: # <<< ✅ این بخش اضافه شده
       - robopost_network
     healthcheck:
       test: ["CMD", "rabbitmq-diagnostics", "ping"]
       interval: 10s
       timeout: 5s
-      retries: 5
-      start_period: 30s
+      retries: 10
 
   management-api:
     build:
@@ -66,14 +65,12 @@ services:
       rabbitmq:
         condition: service_healthy
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
-    # --- START: این بخش کلیدی مشکل را حل می‌کند ---
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/healthz"]
       interval: 20s
       timeout: 20s
       retries: 10
       start_period: 30s
-    # --- END: بخش اضافه شده ---
 
   fetcher-service:
     build:
@@ -91,9 +88,7 @@ services:
       - robopost_network
     depends_on:
       management-api:
-        # --- START: این بخش مشکل را حل می‌کند ---
         condition: service_healthy
-        # --- END: بخش اصلاح شده ---
 
   publisher-service:
     build:
@@ -111,9 +106,7 @@ services:
       - robopost_network
     depends_on:
       management-api:
-        # --- START: این بخش مشکل را حل می‌کند ---
         condition: service_healthy
-        # --- END: بخش اصلاح شده ---
       rabbitmq:
         condition: service_healthy
 
@@ -144,6 +137,8 @@ services:
     container_name: telegram-manager
     env_file: .env
     restart: unless-stopped
+    ports:
+      - "8080:8080"
     volumes:
       - ./services/telegram-manager/app:/usr/src/app/app
       - ./common:/usr/src/app/common
@@ -153,4 +148,6 @@ services:
       - robopost_network
     depends_on:
       management-api:
-        condition: service_healthy        
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy

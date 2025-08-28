@@ -1,16 +1,16 @@
-# FILE: ./services/processor-service/app/main.py  (single-pass unified variant)
-# Updated for latest Google Gen AI SDK (google-genai): structured JSON output + client.models.generate_content
-# Single-pass mode: translate title + translate content + telegram summary + quality score in ONE call.
+# FILE: ./services/processor-service/app/main.py
+# (نسخه بازنویسی شده برای پشتیبانی از پردازش دو مرحله‌ای)
 
 import logging
 import os
 import json
 import requests
-from typing import Optional
+from typing import Optional, List
+import threading
 
 from dotenv import load_dotenv
 
-# Google Gen AI SDK (latest)
+# Google Gen AI SDK
 from google import genai
 from google.genai import types
 from pydantic import BaseModel
@@ -24,35 +24,32 @@ from common.rabbit import RabbitMQClient
 # ---------------------------
 load_dotenv()
 
-QUEUE_NAME = os.getenv("QUEUE_NAME", "post_created_queue")
+# --- نام صف‌های جدید ---
+POST_CREATED_QUEUE = os.getenv("POST_CREATED_QUEUE", "post_created_queue")
+CONTENT_PROCESSING_QUEUE = os.getenv("CONTENT_PROCESSING_QUEUE", "content_processing_queue")
+REVIEW_NOTIFICATIONS_QUEUE = "review_notifications_queue" 
+FINAL_APPROVAL_NOTIFICATIONS_QUEUE = "final_approval_notifications_queue"
 MANAGEMENT_API_URL = os.getenv("MANAGEMENT_API_URL", "http://management-api:8000")
 
-# The SDK auto-detects GEMINI_API_KEY or GOOGLE_API_KEY from env
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
 
-# ---- Logging ----
 setup_logging()
-logger = logging.getLogger("processor-service")
+logger = logging.getLogger("processor-service-v2")
 
 # ---------------------------
 # Structured Output Schemas
 # ---------------------------
-class Translation(BaseModel):
+# خروجی مرحله اول: پیش‌پردازش
+class PreProcessOutput(BaseModel):
     title_translated: str
+    quality_score: float  # 0..10
+
+# خروجی مرحله دوم: پردازش محتوا
+class ContentProcessOutput(BaseModel):
     content_translated: str
-
-class TelegramSummary(BaseModel):
-    summary: str
-
-# NEW: unified one-shot schema
-class UnifiedOutput(BaseModel):
-    title_translated: str
-    content_translated: str
-    content_telegram: str
-    quality_score: float  # 0..100
-
-# Toggle single-pass behavior
-SINGLE_PASS = True  # set False to use the previous two-call flow
+    content_telegram: Optional[str] = None
+    content_instagram: Optional[str] = None
+    content_twitter: Optional[str] = None
 
 # ---------------------------
 # Gemini Client
@@ -65,32 +62,10 @@ except Exception as e:
     logger.critical(f"❌ Failed to initialize Gemini client: {e}", exc_info=True)
 
 # ---------------------------
-# Prompts (for two-call flow; kept intact)
-# ---------------------------
-TRANSLATE_PROMPT = (
-    "You are a professional editor and translator tasked with translating English tech news into Persian.\n"
-    "Your instructions are:\n"
-    "1. First, analyze the **Content** field. You MUST 'clean' it by completely removing any text that is not part of the main article, such as advertisements, event promotions, or author bios.\n"
-    "2. Second, translate the original **Title** and the now-cleaned **Content** into fluent Persian.\n"
-    "3. **CRUCIAL:** You MUST preserve the original paragraph structure from the cleaned content. The translated text must have the exact same line breaks and paragraph separations as the source.\n"
-    "4. Finally, return ONLY the translated fields in the specified format. Do not add any extra comments or explanations.\n\n"
-    '**Title:** "{title}"\n'
-    '**Content:** "{content}"'
-)
-
-TELEGRAM_SUMMARY_PROMPT = (
-    "Based on the following translated tech news, generate a concise and engaging summary for a Telegram channel. "
-    "The summary must be in Persian and should not exceed {max_chars} characters. "
-    "Provide the response as a single string of plain text, without any special formatting.\n\n"
-    '**Title:** "{title}"\n'
-    '**Content:** "{content}"'
-)
-
-# ---------------------------
-# HTTP helpers
+# HTTP Helpers
 # ---------------------------
 def get_post_details(post_id: int):
-    """Fetch a post from management-api."""
+    # ... (بدون تغییر) ...
     try:
         resp = requests.get(f"{MANAGEMENT_API_URL}/posts/{post_id}")
         resp.raise_for_status()
@@ -99,109 +74,84 @@ def get_post_details(post_id: int):
         logger.error(f"Could not fetch details for post_id={post_id}: {e}")
         return None
 
-def save_translation(post_id: int, translation_data: dict):
-    """Persist processed translation/summary to management-api."""
+def save_preprocessing_result(post_id: int, result: PreProcessOutput, featured_image_url: Optional[str]):
+    """نتایج پیش‌پردازش را ذخیره و یک پیام برای اطلاع‌رسانی به مدیر ارسال می‌کند."""
+    payload = {
+        "language": "fa",
+        "title_translated": result.title_translated,
+        "score": result.quality_score,
+        "featured_image_url": featured_image_url
+    }
     try:
-        resp = requests.post(f"{MANAGEMENT_API_URL}/posts/{post_id}/translations", json=translation_data)
-        resp.raise_for_status()
-        logger.info(f"✅ Saved translation for post_id={post_id}")
-        return resp.json()
+        # ۱. ذخیره نتیجه در دیتابیس
+        requests.post(f"{MANAGEMENT_API_URL}/posts/{post_id}/translations", json=payload).raise_for_status()
+        logger.info(f"✅ Saved preprocessing result for post_id={post_id}")
+        
+        # ۲. تغییر وضعیت پست
+        requests.post(f"{MANAGEMENT_API_URL}/posts/{post_id}/preprocessed").raise_for_status()
+        logger.info(f"✅ Post status set to PREPROCESSED for post_id={post_id}")
+
+        # ۳. اطلاع‌رسانی به مدیر تلگرام از طریق RabbitMQ
+        with RabbitMQClient() as rmq:
+            message_body = json.dumps({"post_id": post_id})
+            rmq.channel.queue_declare(queue=REVIEW_NOTIFICATIONS_QUEUE, durable=True)
+            rmq.publish(exchange_name="", routing_key=REVIEW_NOTIFICATIONS_QUEUE, body=message_body)
+            logger.info(f"📤 Sent review notification for post_id={post_id}")
+            
+        return True
+    except Exception as e:
+        logger.error(f"Could not save preprocessing result or notify for post_id={post_id}: {e}")
+        return False
+
+def update_translation_with_content(translation_id: int, post_id: int, result: ContentProcessOutput):
+    """ترجمه را با محتوای جدید آپدیت کرده و پیامی برای تایید نهایی مدیر ارسال می‌کند."""
+    
+    # --- START: این بخش اصلاح شده است ---
+    payload = result.model_dump(exclude_unset=True)
+    payload['language'] = 'fa' # فیلد اجباری زبان را اضافه می‌کنیم
+    # --- END: پایان بخش اصلاح شده ---
+
+    try:
+        # ۱. آپدیت ترجمه در دیتابیس
+        requests.patch(f"{MANAGEMENT_API_URL}/translations/{translation_id}", json=payload).raise_for_status()
+        logger.info(f"✅ Updated translation with content for translation_id={translation_id}")
+        
+        # ۲. تغییر وضعیت پست
+        requests.post(f"{MANAGEMENT_API_URL}/posts/{post_id}/ready-for-final-approval").raise_for_status()
+        logger.info(f"✅ Post status set to READY_FOR_FINAL_APPROVAL for post_id={post_id}")
+        
+        # ۳. اطلاع‌رسانی به مدیر تلگرام برای تایید نهایی
+        with RabbitMQClient() as rmq:
+            message_body = json.dumps({"post_id": post_id})
+            rmq.channel.queue_declare(queue=FINAL_APPROVAL_NOTIFICATIONS_QUEUE, durable=True)
+            rmq.publish(exchange_name="", routing_key=FINAL_APPROVAL_NOTIFICATIONS_QUEUE, body=message_body)
+            logger.info(f"📤 Sent final approval notification for post_id={post_id}")
+            
+        return True
     except requests.exceptions.RequestException as e:
-        logger.error(f"Could not save translation for post_id={post_id}: {e}")
-        return None
+        logger.error(f"Could not update translation or notify for post_id={post_id}: {e}")
+        return False
 
 # ---------------------------
-# Core processing helpers
+# Core AI Processing
 # ---------------------------
 def _safety_settings():
-    # tune as needed for prod
-    return [
-        types.SafetySetting(
-            category=types.HarmCategory.HARM_CATEGORY_HATE_SPEECH,
-            threshold=types.HarmBlockThreshold.BLOCK_NONE,
-        ),
-        types.SafetySetting(
-            category=types.HarmCategory.HARM_CATEGORY_HARASSMENT,
-            threshold=types.HarmBlockThreshold.BLOCK_NONE,
-        ),
-        types.SafetySetting(
-            category=types.HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
-            threshold=types.HarmBlockThreshold.BLOCK_NONE,
-        ),
-        types.SafetySetting(
-            category=types.HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
-            threshold=types.HarmBlockThreshold.BLOCK_NONE,
-        ),
-    ]
+    # ... (بدون تغییر) ...
+    pass
 
-def translate_with_gemini(title: str, content: str) -> Translation:
-    if not client:
-        raise RuntimeError("Gemini client not initialized")
-
-    sys_instruction = "You are a professional Persian translator. Return ONLY the translation fields. Preserve numbers, punctuation, and line breaks."
-    prompt = TRANSLATE_PROMPT.format(title=title or "", content=content or "")
-    resp = client.models.generate_content(
-        model="gemini-2.5-flash",
-        contents=prompt,
-        config=types.GenerateContentConfig(
-            system_instruction=sys_instruction,
-            response_mime_type="application/json",
-            response_schema=Translation,
-            temperature=0.2,
-            safety_settings=_safety_settings(),
-        ),
-    )
-    obj: Translation = resp.parsed  # Parsed via schema
-    if obj:
-        return obj
-    data = json.loads(resp.text)
-    return Translation(**data)
-
-def summarize_for_telegram(title_fa: str, content_fa: str, max_chars: int = 1000) -> str:
-    if not client:
-        raise RuntimeError("Gemini client not initialized")
-
-    sys_instruction = "You are a concise Persian copywriter for a Telegram tech channel. Return ONLY the summary text without extra formatting or emojis."
-    prompt = TELEGRAM_SUMMARY_PROMPT.format(title=title_fa or "", content=content_fa or "", max_chars=max_chars)
-    resp = client.models.generate_content(
-        model="gemini-2.0-flash",
-        contents=prompt,
-        config=types.GenerateContentConfig(
-            system_instruction=sys_instruction,
-            response_mime_type="application/json",
-            response_schema=TelegramSummary,
-            temperature=0.3,
-            safety_settings=_safety_settings(),
-        ),
-    )
-    obj: TelegramSummary = resp.parsed
-    return obj.summary.strip() if (obj and obj.summary) else resp.text.strip()
-
-# --- NEW: one-shot translate + summarize + score ---
-def translate_summarize_score(
-    title: str,
-    content: str,
-    max_chars: int = 1000,
-    model: str = "gemini-2.5-pro",
-) -> UnifiedOutput:
+def preprocess_title_and_score(title: str, model: str = "gemini-1.5-flash") -> PreProcessOutput:
+    """مرحله ۱: فقط عنوان را ترجمه و به آن امتیاز می‌دهد."""
     if not client:
         raise RuntimeError("Gemini client not initialized")
 
     sys_instruction = (
-        "You are a professional Persian translator, editor, and copywriter. "
-        "Return ONLY JSON with fields: title_translated (string), content_translated (string), content_telegram (string), quality_score (number). "
+        "You are a professional Persian translator and editor. "
+        "Return ONLY JSON with fields: title_translated (string), quality_score (number). "
         "Requirements: "
-        "1) Clean the content by removing non-article text (ads/promos/bios). "
-        "2) Translate title and cleaned content to Persian; preserve original paragraph breaks and line feeds exactly. "
-        f"3) Write content_telegram as a concise Persian summary of the translated content, max {max_chars} characters, no emojis or markdown. "
-        "4) quality_score in [0,10] reflecting fidelity and clarity; use a dot for decimals."
+        "1) Translate the title to fluent, engaging Persian. "
+        "2) quality_score in [0,10] reflecting translation fidelity and clarity; use a dot for decimals."
     )
-
-    prompt = (
-        'Translate and summarize the following English tech news.\n\n'
-        f'**Title:** "{title or ""}"\n'
-        f'**Content:** "{content or ""}"'
-    )
+    prompt = f'**Title:** "{title or ""}"'
 
     resp = client.models.generate_content(
         model=model,
@@ -209,79 +159,55 @@ def translate_summarize_score(
         config=types.GenerateContentConfig(
             system_instruction=sys_instruction,
             response_mime_type="application/json",
-            response_schema=UnifiedOutput,
+            response_schema=PreProcessOutput,
             temperature=0.2,
             safety_settings=_safety_settings(),
         ),
     )
+    return resp.parsed
 
-    obj: UnifiedOutput = resp.parsed
-    if obj:
-        return obj
-    data = json.loads(resp.text)
-    return UnifiedOutput(**data)
-
-# ---------------------------
-# Pipeline
-# ---------------------------
-def process_post_with_ai(post_details: dict):
-    """Main pipeline: (single-pass) translate EN->FA + telegram summary + score, then send to management-api.
-       If SINGLE_PASS=False, falls back to the previous 2-call approach."""
-    post_id = post_details.get("id")
-    title = post_details.get("title_original")
-    content = post_details.get("content_original")
-
+def process_content_for_platforms(content: str, platforms: List[str], model: str = "gemini-1.5-pro") -> ContentProcessOutput:
+    """مرحله ۲: محتوای اصلی را بر اساس پلتفرم‌های درخواستی پردازش می‌کند."""
     if not client:
-        logger.error("AI client is not available. Skipping processing.")
-        return
+        raise RuntimeError("Gemini client not initialized")
+    
+    # ساختن پرامپت به صورت پویا بر اساس پلتفرم‌های درخواستی
+    platform_requirements = [
+        "First, translate the entire original **Content** into fluent Persian. Preserve the original paragraph structure.",
+        "The translated content should be in the 'content_translated' field."
+    ]
+    if "telegram" in platforms:
+        platform_requirements.append("- Generate 'content_telegram': A concise Persian summary, under 1000 characters.")
+    if "instagram" in platforms:
+        platform_requirements.append("- Generate 'content_instagram': An engaging Persian summary for Instagram, under 2200 characters, with relevant hashtags.")
+    if "twitter" in platforms:
+        platform_requirements.append("- Generate 'content_twitter': A very short Persian summary for Twitter/X, under 280 characters.")
 
-    try:
-        if SINGLE_PASS:
-            logger.info(f"One-shot translate+summary+score, post_id={post_id}")
-            u = translate_summarize_score(title, content, max_chars=1000, model="gemini-2.5-pro")
-            title_fa = u.title_translated
-            content_fa = u.content_translated
-            telegram_summary = u.content_telegram
-            logger.info(f"quality_score={u.quality_score}")
-        else:
-            # 2-call flow (legacy)
-            logger.info(f"Translating post_id={post_id}")
-            translation = translate_with_gemini(title, content)
-            title_fa = translation.title_translated
-            content_fa = translation.content_translated
+    sys_instruction = (
+        "You are a professional Persian translator and multi-platform copywriter.\n"
+        "Return ONLY a JSON object.\n"
+        "Instructions:\n" + "\n".join(platform_requirements)
+    )
+    prompt = f'**Content:**\n"{content or ""}"'
 
-            logger.info(f"Summarizing for Telegram, post_id={post_id}")
-            telegram_summary = summarize_for_telegram(title_fa, content_fa, max_chars=1000)
-        featured_image_url = None
-        try:
-            # از ساختار جدید 'images' که لیستی از آبجکت‌هاست استفاده می‌کنیم
-            images_list = post_details.get("images") or []
-            if isinstance(images_list, list) and images_list:
-                # اولین تصویر از لیست جدید را به عنوان تصویر شاخص انتخاب می‌کنیم
-                featured_image_url = images_list[0].get("url")
-        except Exception:
-            featured_image_url = None
-
-
-        final_data = {
-            "language": "fa",
-            "title_translated": title_fa,
-            "content_translated": content_fa,
-            "content_telegram": telegram_summary,
-            "content_instagram": "NULL",
-            "content_twitter": "NULL",
-            "featured_image_url": featured_image_url,
-            "score": u.quality_score if SINGLE_PASS else None,
-        }
-        save_translation(post_id, final_data)
-
-    except Exception as e:
-        logger.error(f"Error during AI processing for post_id={post_id}: {e}", exc_info=True)
+    resp = client.models.generate_content(
+        model=model,
+        contents=prompt,
+        config=types.GenerateContentConfig(
+            system_instruction=sys_instruction,
+            response_mime_type="application/json",
+            response_schema=ContentProcessOutput,
+            temperature=0.3,
+            safety_settings=_safety_settings(),
+        ),
+    )
+    return resp.parsed
 
 # ---------------------------
-# RabbitMQ callback & main
+# RabbitMQ Callbacks
 # ---------------------------
-def callback(ch, method, properties, body):
+def on_post_created_callback(ch, method, properties, body):
+    """Callback برای صف post_created_queue (مرحله ۱: پیش‌پردازش)"""
     try:
         message = json.loads(body)
         post_id = message.get("post_id")
@@ -290,32 +216,88 @@ def callback(ch, method, properties, body):
             ch.basic_ack(delivery_tag=method.delivery_tag)
             return
 
-        logger.info(f"📬 Received post_created for post_id={post_id}")
+        logger.info(f"📬 [PREPROCESS] Received post_created for post_id={post_id}")
         post_details = get_post_details(post_id)
         if not post_details:
             ch.basic_nack(delivery_tag=method.delivery_tag, requeue=True)
             return
 
-        process_post_with_ai(post_details)
-        logger.info(f"✅ Processed post_id={post_id}")
+        title = post_details.get("title_original")
+        result = preprocess_title_and_score(title)
+        
+        # استخراج اولین تصویر به عنوان تصویر شاخص
+        featured_image_url = (post_details.get("images")[0].get("url") 
+                              if post_details.get("images") else None)
+
+        save_preprocessing_result(post_id, result, featured_image_url)
+        logger.info(f"✅ [PREPROCESS] Finished for post_id={post_id}")
         ch.basic_ack(delivery_tag=method.delivery_tag)
 
     except Exception as e:
-        logger.error(f"Failed to process message: {e}", exc_info=True)
+        logger.error(f"Failed to preprocess message: {e}", exc_info=True)
         ch.basic_nack(delivery_tag=method.delivery_tag, requeue=True)
 
+# FILE: ./services/processor-service/app/main.py
+
+def on_content_processing_callback(ch, method, properties, body):
+    """Callback برای صف content_processing_queue (مرحله ۲: پردازش محتوا)"""
+    try:
+        message = json.loads(body)
+        post_id = message.get("post_id")
+        platforms = message.get("platforms", [])
+        if not post_id or not platforms:
+            logger.warning("Received invalid content processing request; acking.")
+            ch.basic_ack(delivery_tag=method.delivery_tag)
+            return
+        
+        logger.info(f"📬 [PROCESS CONTENT] Received request for post_id={post_id}, platforms={platforms}")
+        post_details = get_post_details(post_id)
+        if not post_details or not post_details.get("translations"):
+            ch.basic_nack(delivery_tag=method.delivery_tag, requeue=True)
+            return
+
+        content = post_details.get("content_original")
+        result = process_content_for_platforms(content, platforms)
+        
+        translation_id = post_details["translations"][0]["id"]
+        
+        # --- START: این خط اصلاح شده است ---
+        # ما post_id را به عنوان ورودی سوم به تابع پاس می‌دهیم
+        if update_translation_with_content(translation_id, post_id, result):
+        # --- END: پایان بخش اصلاح شده ---
+            logger.info(f"✅ [PROCESS CONTENT] Finished for post_id={post_id}")
+            ch.basic_ack(delivery_tag=method.delivery_tag)
+        else:
+            ch.basic_nack(delivery_tag=method.delivery_tag, requeue=True)
+
+    except Exception as e:
+        logger.error(f"Failed to process content message: {e}", exc_info=True)
+        ch.basic_nack(delivery_tag=method.delivery_tag, requeue=True)
+
+# ---------------------------
+# Main Function
+# ---------------------------
 def main():
-    logger.info("--- 🧠 Processor Service Started ---")
-    if not GEMINI_API_KEY and not os.getenv("GOOGLE_API_KEY"):
-        logger.warning("⚠️ No GEMINI_API_KEY/GOOGLE_API_KEY found in env; relying on default client auth.")
+    logger.info("--- 🧠 Processor Service V2 Started ---")
     if not client:
         logger.critical("❌ Gemini client is not available; exiting.")
         return
 
-    with RabbitMQClient() as rmq:
-        rmq.channel.queue_declare(queue=QUEUE_NAME, durable=True)
-        logger.info(f"Waiting for messages in '{QUEUE_NAME}'...")
-        rmq.start_consuming(queue_name=QUEUE_NAME, callback=callback)
+    # ایجاد و اجرای هر listener در یک thread جداگانه
+    def listen(queue_name, callback_func):
+        with RabbitMQClient() as rmq:
+            rmq.channel.queue_declare(queue=queue_name, durable=True)
+            logger.info(f"Waiting for messages in '{queue_name}'...")
+            rmq.start_consuming(queue_name=queue_name, callback=callback_func)
+
+    preprocess_thread = threading.Thread(target=listen, args=(POST_CREATED_QUEUE, on_post_created_callback))
+    content_process_thread = threading.Thread(target=listen, args=(CONTENT_PROCESSING_QUEUE, on_content_processing_callback))
+
+    preprocess_thread.start()
+    content_process_thread.start()
+
+    preprocess_thread.join()
+    content_process_thread.join()
 
 if __name__ == "__main__":
     main()

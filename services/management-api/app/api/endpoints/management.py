@@ -192,6 +192,16 @@ def get_fetched_posts(skip: int = 0, limit: int = 100, db: Session = Depends(get
     )
     return posts
 
+@router.get("/posts/status/preprocessed", response_model=List[schemas.PostInDB])
+def get_preprocessed_posts(db: Session = Depends(get_db)):
+    """پست‌هایی که پیش‌پردازش شده و منتظر بازبینی اولیه مدیر هستند را برمی‌گرداند."""
+    return db.query(models.Post).filter(models.Post.status == models.PostStatus.PREPROCESSED).all()
+
+@router.get("/posts/status/ready-for-final-approval", response_model=List[schemas.PostInDB])
+def get_posts_ready_for_final_approval(db: Session = Depends(get_db)):
+    """پست‌هایی که پردازش محتوای آنها تمام شده و منتظر تایید نهایی هستند را برمی‌گرداند."""
+    return db.query(models.Post).filter(models.Post.status == models.PostStatus.READY_FOR_FINAL_APPROVAL).all()
+
 @router.post("/posts/{post_id}/approve", response_model=schemas.PostInDB)
 def approve_post(post_id: int, db: Session = Depends(get_db)):
     """یک پست را تایید می‌کند، وضعیت آن را به 'approved' تغییر می‌دهد و پیامی به RabbitMQ ارسال می‌کند."""
@@ -213,6 +223,81 @@ def approve_post(post_id: int, db: Session = Depends(get_db)):
     
     db.refresh(db_post)
     return db_post
+
+@router.post("/posts/{post_id}/process-content", status_code=202)
+def request_content_processing(post_id: int, request_body: schemas.ContentProcessingRequest, db: Session = Depends(get_db)):
+    """
+    درخواست برای پردازش محتوای یک پست برای پلتفرم‌های مشخص.
+    وضعیت پست را به 'processing_content' تغییر می‌دهد و یک رویداد به RabbitMQ ارسال می‌کند.
+    """
+    db_post = db.query(models.Post).filter(models.Post.id == post_id).first()
+    if not db_post:
+        raise HTTPException(status_code=404, detail="Post not found")
+
+    db_post.status = models.PostStatus.PROCESSING_CONTENT
+    db.commit()
+
+    try:
+        with RabbitMQClient() as client:
+            queue_name = 'content_processing_queue'
+            # از request_body.platforms برای دسترسی به لیست پلتفرم‌ها استفاده می‌کنیم
+            message_body = json.dumps({"post_id": post_id, "platforms": request_body.platforms})
+            client.channel.queue_declare(queue=queue_name, durable=True)
+            client.publish(exchange_name="", routing_key=queue_name, body=message_body)
+            logger.info(f"Sent content processing request for post_id: {post_id} for platforms: {request_body.platforms}")
+    except Exception as e:
+        logger.error(f"Failed to send message to RabbitMQ for post_id: {post_id}. Error: {e}")
+        db_post.status = models.PostStatus.PENDING_APPROVAL 
+        db.commit()
+        raise HTTPException(status_code=500, detail="Could not send processing request")
+
+    db.refresh(db_post)
+    return {"message": "Content processing requested successfully."}
+
+
+
+@router.post("/posts/{post_id}/ready-for-final-approval", response_model=schemas.PostInDB)
+def set_post_status_to_ready(post_id: int, db: Session = Depends(get_db)):
+    """وضعیت پست را به 'ready_for_final_approval' تغییر می‌دهد (معمولاً توسط processor-service فراخوانی می‌شود)."""
+    db_post = db.query(models.Post).filter(models.Post.id == post_id).first()
+    if not db_post:
+        raise HTTPException(status_code=404, detail="Post not found")
+    
+    db_post.status = models.PostStatus.READY_FOR_FINAL_APPROVAL
+    db.commit()
+    db.refresh(db_post)
+    logger.info(f"Post {post_id} status changed to READY_FOR_FINAL_APPROVAL.")
+    return db_post
+
+@router.post("/posts/{post_id}/preprocessed", response_model=schemas.PostInDB)
+def set_post_status_to_preprocessed(post_id: int, db: Session = Depends(get_db)):
+    """وضعیت پست را به 'preprocessed' تغییر می‌دهد (توسط processor-service فراخوانی می‌شود)."""
+    db_post = db.query(models.Post).filter(models.Post.id == post_id).first()
+    if not db_post:
+        raise HTTPException(status_code=404, detail="Post not found")
+    
+    db_post.status = models.PostStatus.PREPROCESSED
+    db.commit()
+    db.refresh(db_post)
+    logger.info(f"Post {post_id} status changed to PREPROCESSED.")
+    return db_post
+
+@router.patch("/translations/{translation_id}", response_model=schemas.PostTranslationInDB)
+def update_translation(translation_id: int, translation_update: schemas.PostTranslationCreate, db: Session = Depends(get_db)):
+    """یک رکورد ترجمه موجود را با خلاصه‌های محتوا به‌روزرسانی می‌کند."""
+    db_translation = db.query(models.PostTranslation).filter(models.PostTranslation.id == translation_id).first()
+    if not db_translation:
+        raise HTTPException(status_code=404, detail="Translation not found")
+
+    update_data = translation_update.model_dump(exclude_unset=True)
+    for key, value in update_data.items():
+        setattr(db_translation, key, value)
+    
+    db.commit()
+    db.refresh(db_translation)
+    logger.info(f"Translation {translation_id} updated successfully.")
+    return db_translation
+
 
 @router.post("/posts/{post_id}/pending", response_model=schemas.PostInDB)
 def set_post_status_to_pending(post_id: int, db: Session = Depends(get_db)):

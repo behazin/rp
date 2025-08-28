@@ -76,6 +76,8 @@ class PostInDB(PostBase):
     source_id: int
     status: PostStatus
     created_at: datetime
+    admin_chat_id: Optional[str] = None
+    admin_message_id: Optional[str] = None
     translations: List[PostTranslationInDB] = []
     images: List[PostImageInDB] = []
     model_config = ConfigDict(from_attributes=True)
@@ -87,6 +89,8 @@ class SourceInDB(SourceInDBBase):
 class DestinationInDB(DestinationInDBBase):
     sources: List[SourceInDBBase] = []
 
+class ContentProcessingRequest(BaseModel):
+    platforms: List[str]
 
 class PostTranslationCreate(PostTranslationBase):
     pass
