@@ -46,7 +46,7 @@ class PreProcessOutput(BaseModel):
 
 # خروجی مرحله دوم: پردازش محتوا
 class ContentProcessOutput(BaseModel):
-    content_translated: str
+    content_translated: Optional[str] = None
     content_telegram: Optional[str] = None
     content_instagram: Optional[str] = None
     content_twitter: Optional[str] = None
@@ -167,27 +167,40 @@ def preprocess_title_and_score(title: str, model: str = "gemini-1.5-flash") -> P
     return resp.parsed
 
 def process_content_for_platforms(content: str, platforms: List[str], model: str = "gemini-1.5-pro") -> ContentProcessOutput:
-    """مرحله ۲: محتوای اصلی را بر اساس پلتفرم‌های درخواستی پردازش می‌کند."""
+    """مرحله ۲: محتوای اصلی را بر اساس پلتفرم‌های درخواستی و با بهینه‌سازی دقیق هزینه پردازش می‌کند."""
     if not client:
         raise RuntimeError("Gemini client not initialized")
+
+    # --- START: منطق نهایی و اصلاح شده برای ساخت پرامپت ---
     
-    # ساختن پرامپت به صورت پویا بر اساس پلتفرم‌های درخواستی
-    platform_requirements = [
-        "First, translate the entire original **Content** into fluent Persian. Preserve the original paragraph structure.",
-        "The translated content should be in the 'content_translated' field."
-    ]
-    if "telegram" in platforms:
-        platform_requirements.append("- Generate 'content_telegram': A concise Persian summary, under 1000 characters.")
-    if "instagram" in platforms:
-        platform_requirements.append("- Generate 'content_instagram': An engaging Persian summary for Instagram, under 2200 characters, with relevant hashtags.")
-    if "twitter" in platforms:
-        platform_requirements.append("- Generate 'content_twitter': A very short Persian summary for Twitter/X, under 280 characters.")
+    # اگر بیش از یک پلتفرم در لیست باشد، به معنی "تایید کل" است
+    is_approve_all = len(platforms) > 1
+
+    platform_requirements = []
+    
+    if is_approve_all:
+        # حالت کامل: ابتدا ترجمه کامل، سپس خلاصه‌سازی برای همه
+        platform_requirements.append("1. First, translate the entire original **Content** into fluent Persian. The result MUST be in the 'content_translated' field.")
+        platform_requirements.append("2. From the translated content, generate 'content_telegram': A concise Persian summary, under 1000 characters.")
+        platform_requirements.append("3. From the translated content, generate 'content_instagram': An engaging Persian summary for Instagram, under 2200 characters, with relevant hashtags.")
+        platform_requirements.append("4. From the translated content, generate 'content_twitter': A very short Persian summary for Twitter/X, under 280 characters.")
+    else:
+        # حالت بهینه: فقط خلاصه مستقیم برای پلتفرم مشخص شده
+        target_platform = platforms[0] # چون در این حالت فقط یک پلتفرم داریم
+        if target_platform == "telegram":
+            platform_requirements.append("- Directly translate and summarize the original English **Content** into a concise Persian summary for Telegram. The result MUST be in the 'content_telegram' field and be under 1000 characters. Do NOT provide a full 'content_translated'.")
+        elif target_platform == "instagram":
+            platform_requirements.append("- Directly translate and summarize the original English **Content** into an engaging Persian summary for Instagram. The result MUST be in the 'content_instagram' field, be under 2200 characters, and include relevant hashtags. Do NOT provide a full 'content_translated'.")
+        elif target_platform == "twitter":
+            platform_requirements.append("- Directly translate and summarize the original English **Content** into a very short Persian summary for Twitter/X. The result MUST be in the 'content_twitter' field and be under 280 characters. Do NOT provide a full 'content_translated'.")
 
     sys_instruction = (
         "You are a professional Persian translator and multi-platform copywriter.\n"
-        "Return ONLY a JSON object.\n"
+        "Return ONLY a JSON object with the requested fields.\n"
         "Instructions:\n" + "\n".join(platform_requirements)
     )
+    # --- END: پایان منطق نهایی ---
+
     prompt = f'**Content:**\n"{content or ""}"'
 
     resp = client.models.generate_content(
@@ -198,7 +211,6 @@ def process_content_for_platforms(content: str, platforms: List[str], model: str
             response_mime_type="application/json",
             response_schema=ContentProcessOutput,
             temperature=0.3,
-            safety_settings=_safety_settings(),
         ),
     )
     return resp.parsed
