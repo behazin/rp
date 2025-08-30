@@ -1,4 +1,4 @@
-# FILE: ./docker-compose.yml (نسخه نهایی و اصلاح شده)
+# FILE: ./docker-compose.yml (نسخه نهایی با NGINX)
 
 networks:
   robopost_network:
@@ -18,7 +18,7 @@ services:
       - "3306:3306"
     volumes:
       - mysql_data:/var/lib/mysql
-    networks: # <<< ✅ این بخش اضافه شده
+    networks:
       - robopost_network
     healthcheck:
       test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u${MYSQL_USER}", "-p${MYSQL_PASSWORD}"]
@@ -37,13 +37,30 @@ services:
       - "15672:15672"
     volumes:
       - rabbitmq_data:/var/lib/rabbitmq/
-    networks: # <<< ✅ این بخش اضافه شده
+    networks:
       - robopost_network
     healthcheck:
       test: ["CMD", "rabbitmq-diagnostics", "ping"]
       interval: 10s
       timeout: 5s
       retries: 10
+
+  nginx:
+    image: nginx:1.25-alpine
+    container_name: nginx-proxy
+    restart: unless-stopped
+    ports:
+      - "80:80" # فقط پورت 80 (HTTP) باز است
+      - "443:443"
+    volumes:
+      - ./certbot/www:/var/www/certbot:ro 
+      - /etc/letsencrypt:/etc/letsencrypt:ro
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    networks:
+      - robopost_network
+    depends_on:
+      - management-api
+      - telegram-manager
 
   management-api:
     build:
@@ -52,8 +69,7 @@ services:
     container_name: management-api
     env_file: .env
     restart: unless-stopped
-    ports:
-      - "8000:8000"
+    # پورت این سرویس دیگر به بیرون باز نیست
     volumes:
       - ./services/management-api:/usr/src/app
       - ./common:/usr/src/app/common
