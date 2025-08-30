@@ -1,4 +1,3 @@
-# FILE: ./services/management-api/requirements.txt
 fastapi
 uvicorn
 pydantic

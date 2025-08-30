@@ -94,3 +94,11 @@ class ContentProcessingRequest(BaseModel):
 
 class PostTranslationCreate(PostTranslationBase):
     pass
+
+
+class PostUpdate(BaseModel):
+    status: Optional[PostStatus] = None
+    admin_chat_id: Optional[str] = None
+    admin_message_id: Optional[str] = None
+    
+    model_config = ConfigDict(from_attributes=True)
