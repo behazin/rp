@@ -9,6 +9,7 @@ from common.rabbit import RabbitMQClient
 from common.database import get_db
 from app.models import management as models
 from app.schemas import management as schemas
+import json
 
 
 router = APIRouter()
@@ -82,20 +83,28 @@ def reject_post(post_id: int, db: Session = Depends(get_db)):
     db.commit()
     
     # ۲. یک رویداد برای اطلاع‌رسانی به سرویس‌های دیگر منتشر می‌شود
-    if db_post.admin_chat_id and db_post.admin_message_id:
+    # --- START: منطق اصلاح شده ---
+    # ما مستقیما رشته JSON ذخیره شده در admin_message_id را می خوانیم
+    if db_post.admin_message_id:
         try:
             with RabbitMQClient() as client:
                 queue_name = 'post_rejected_queue'
+                
+                # پیام باید شامل خود رشته JSON باشد که در دیتابیس ذخیره شده
+                # توجه کنید که در اینجا مقدار db_post.admin_message_id خودش یک رشته JSON است،
+                # اما ما آن را در یک دیکشنری دیگر قرار می دهیم تا ساختار پیام کلی معتبر باشد.
                 message_body = json.dumps({
                     "post_id": db_post.id,
-                    "admin_chat_id": db_post.admin_chat_id,
-                    "admin_message_id": db_post.admin_message_id
+                    "admin_message_id": db_post.admin_message_id 
                 })
+                
                 client.channel.queue_declare(queue=queue_name, durable=True)
                 client.publish(exchange_name="", routing_key=queue_name, body=message_body)
                 logger.info(f"Published 'post_rejected' event for post_id: {post_id}")
         except Exception as e:
             logger.error(f"Failed to publish 'post_rejected' event for post_id: {post_id}. Error: {e}")
+            
+    # --- END: منطق اصلاح شده ---
             
     db.refresh(db_post)
     return db_post
@@ -170,8 +179,8 @@ def set_admin_message_info(post_id: int, info: schemas.AdminMessageInfoUpdate, d
     if not db_post:
         raise HTTPException(status_code=404, detail="Post not found")
     
-    db_post.admin_chat_id = str(info.admin_chat_id)
-    db_post.admin_message_id = str(info.admin_message_id)
+    db_post.admin_message_id = json.dumps(info.admin_messages)
+    db_post.admin_chat_id = None 
     db.commit()
     db.refresh(db_post)
     return db_post

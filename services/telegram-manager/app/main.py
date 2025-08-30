@@ -81,7 +81,8 @@ def send_initial_approval_request(bot_instance, post_data):
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
-    first_message = True
+    sent_messages_info = {}
+    success = False
     for chat_id in TELEGRAM_ADMIN_CHAT_IDS:
         if not chat_id:
             continue
@@ -94,40 +95,52 @@ def send_initial_approval_request(bot_instance, post_data):
                 sent_message = bot_instance.send_message(chat_id=chat_id, text=text,
                                                       parse_mode="Markdown", reply_markup=reply_markup)
 
+            sent_messages_info[str(sent_message.chat_id)] = sent_message.message_id
             logger.info(f"Sent post_id {post_id} for initial approval to chat_id {chat_id}.")
-            
-            if first_message:
-                info_payload = {"admin_chat_id": sent_message.chat_id, "admin_message_id": sent_message.message_id}
-                requests.post(f"{MANAGEMENT_API_URL}/posts/{post_id}/admin-message-info", json=info_payload).raise_for_status()
-                mark_as_pending_approval(post_id)
-                first_message = False
+            success = True
 
         except Exception as e:
             logger.error(f"Failed to send initial request for post_id {post_id} to chat_id {chat_id}. Error: {e}")
-    return not first_message # Return True if at least one message was sent
+
+    if success:
+        # --- START: این بخش کلیدی اصلاح شده است ---
+        # ما دیکشنری اطلاعات پیام‌ها را مستقیماً در فیلد admin_messages ارسال می‌کنیم
+        # تا با اسکیمای جدید management-api هماهنگ باشد.
+        info_payload = {"admin_messages": sent_messages_info}
+        # --- END: بخش اصلاح شده ---
+        requests.post(f"{MANAGEMENT_API_URL}/posts/{post_id}/admin-message-info", json=info_payload).raise_for_status()
+        mark_as_pending_approval(post_id)
+        
+    return success
 
 def update_message_for_final_approval(bot_instance, post_data):
-    """پیام مدیر را با محتوای پردازش شده و کیبورد هوشمند آپدیت می‌کند."""
+    """پیام همه مدیران را با محتوای پردازش شده آپدیت می‌کند."""
     post_id = post_data.get('id')
-    admin_chat_id = post_data.get('admin_chat_id')
-    admin_message_id = post_data.get('admin_message_id')
+    admin_messages_str = post_data.get('admin_message_id')
+    
+    if not admin_messages_str:
+        logger.warning(f"No admin message info found for post_id: {post_id}. Cannot update.")
+        return
+
+    try:
+        admin_messages = json.loads(admin_messages_str)
+    except json.JSONDecodeError:
+        logger.error(f"Could not decode admin_messages JSON for post_id: {post_id}")
+        return
+
     translation = post_data['translations'][0]
 
-    # --- START: منطق جدید و هوشمند برای ساخت کیبورد ---
     base_text = (f"📰 **پست آماده برای تأیید نهایی**\n\n"
                  f"**شناسه:** `{post_id}`\n"
                  f"**امتیاز کیفیت:** {translation.get('score', 0):.1f}/10\n\n"
                  f"**عنوان:** {translation.get('title_translated')}")
 
-    # اضافه کردن خلاصه‌های موجود به متن
     summary_text = ""
     if translation.get('content_telegram'):
         summary_text += f"\n\n📝 **خلاصه تلگرام:**\n_{translation.get('content_telegram')}_"
-    # (می‌توانید خلاصه‌های اینستاگرام و توییتر را نیز به همین شکل اضافه کنید)
     
     updated_text = base_text + summary_text
 
-    # بررسی اینکه کدام پلتفرم‌ها پردازش شده‌اند تا در کنارشان تیک بخورد
     tg_done = "✅ " if translation.get('content_telegram') else "💬 "
     ig_done = "✅ " if translation.get('content_instagram') else "📸 "
     tw_done = "✅ " if translation.get('content_twitter') else "🐦 "
@@ -139,29 +152,29 @@ def update_message_for_final_approval(bot_instance, post_data):
             InlineKeyboardButton(f"{ig_done}اینستاگرام", callback_data=f"process_instagram_{post_id}"),
             InlineKeyboardButton(f"{tw_done}توییتر", callback_data=f"process_twitter_{post_id}"),
         ],
-        [InlineKeyboardButton("🚀 تأیید نهایی و انتشار", callback_data=f"final_approve_{post_id}")], # دکمه جدید
+        [InlineKeyboardButton("🚀 تأیید نهایی و انتشار", callback_data=f"final_approve_{post_id}")],
         [InlineKeyboardButton("❌ رد کردن", callback_data=f"reject_{post_id}")],
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
-    # --- END: پایان منطق جدید ---
     
-    try:
-        if post_data.get('translations')[0].get('featured_image_url'):
-            bot_instance.edit_message_caption(chat_id=admin_chat_id, message_id=admin_message_id,
-                                            caption=updated_text, parse_mode="Markdown", reply_markup=reply_markup)
-        else:
-            bot_instance.edit_message_text(text=updated_text, chat_id=admin_chat_id, message_id=admin_message_id,
-                                         parse_mode="Markdown", reply_markup=reply_markup)
+    for chat_id, message_id in admin_messages.items():
+        try:
+            if post_data.get('translations')[0].get('featured_image_url'):
+                bot_instance.edit_message_caption(chat_id=chat_id, message_id=message_id,
+                                                caption=updated_text, parse_mode="Markdown", reply_markup=reply_markup)
+            else:
+                bot_instance.edit_message_text(text=updated_text, chat_id=chat_id, message_id=message_id,
+                                             parse_mode="Markdown", reply_markup=reply_markup)
+        except telegram_error.BadRequest as e:
+            if "message is not modified" in str(e):
+                logger.warning(f"Message for post {post_id} in chat {chat_id} was already updated. Skipping.")
+            else:
+                logger.error(f"Failed to update message for post {post_id} in chat {chat_id}. Error: {e}")
+        except Exception as e:
+            logger.error(f"An unexpected error occurred while updating message in chat {chat_id} for post {post_id}: {e}")
 
-        logger.info(f"Updated message for final approval for post_id: {post_id}")
-        # وضعیت را به pending approval تغییر می‌دهیم تا از حلقه پردازش خارج شود
-        mark_as_pending_approval(post_id)
-    except telegram_error.BadRequest as e:
-        if "message is not modified" in str(e):
-            logger.warning(f"Message for post {post_id} was already updated. Skipping.")
-            mark_as_pending_approval(post_id)
-        else:
-            logger.error(f"Failed to update message for post_id {post_id}. Error: {e}")
+    logger.info(f"Finished updating messages for final approval for post_id: {post_id}")
+    mark_as_pending_approval(post_id)
 
 # --- RabbitMQ Listeners (با منطق جدید و مقاوم) ---
 def on_review_notification(ch, method, properties, body):
@@ -186,16 +199,28 @@ def on_post_rejected(ch, method, properties, body):
     try:
         message = json.loads(body)
         post_id = message.get("post_id")
-        chat_id = message.get("admin_chat_id")
-        message_id = message.get("admin_message_id")
-        if not all([post_id, chat_id, message_id]):
+        admin_messages_str = message.get("admin_message_id")
+        
+        if not all([post_id, admin_messages_str]):
             logger.warning("Received invalid 'post_rejected' message. Acking.")
             ch.basic_ack(delivery_tag=method.delivery_tag)
             return
 
-        logger.info(f"Received 'post_rejected' event for post_id: {post_id}. Deleting message...")
-        bot.delete_message(chat_id=int(chat_id), message_id=int(message_id))
-        logger.info(f"Successfully deleted admin message for post_id: {post_id}")
+        try:
+            admin_messages = json.loads(admin_messages_str)
+        except json.JSONDecodeError:
+            logger.error(f"Could not decode admin_messages JSON for post_id: {post_id} in rejection queue.")
+            ch.basic_ack(delivery_tag=method.delivery_tag)
+            return
+
+        logger.info(f"Received 'post_rejected' event for post_id: {post_id}. Deleting messages...")
+        for chat_id, message_id in admin_messages.items():
+            try:
+                bot.delete_message(chat_id=int(chat_id), message_id=int(message_id))
+            except Exception as e:
+                logger.error(f"Failed to delete message for post_id: {post_id} in chat_id: {chat_id}. Error: {e}")
+        
+        logger.info(f"Successfully processed 'post_rejected' for post_id: {post_id}")
         ch.basic_ack(delivery_tag=method.delivery_tag)
     except Exception as e:
         logger.error(f"Failed to process 'post_rejected' message: {e}", exc_info=True)

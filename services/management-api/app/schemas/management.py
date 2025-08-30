@@ -4,6 +4,7 @@ from pydantic import BaseModel, HttpUrl, ConfigDict
 from typing import Dict, Any, List, Optional
 from datetime import datetime
 from app.models.management import PostStatus
+from typing import Dict, Any, List, Optional
 
 # --- Base Schemas ---
 class SourceBase(BaseModel):
@@ -68,8 +69,7 @@ class PostCreate(PostBase):
     source_id: int
 
 class AdminMessageInfoUpdate(BaseModel):
-    admin_chat_id: int
-    admin_message_id: int
+    admin_messages: Dict[str, Any]
 
 class PostInDB(PostBase):
     id: int
