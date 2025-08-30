@@ -139,7 +139,7 @@ def _safety_settings():
     # ... (بدون تغییر) ...
     pass
 
-def preprocess_title_and_score(title: str, model: str = "gemini-1.5-flash") -> PreProcessOutput:
+def preprocess_title_and_score(title: str, model: str = "gemini-2.5-flash") -> PreProcessOutput:
     """مرحله ۱: فقط عنوان را ترجمه و به آن امتیاز می‌دهد."""
     if not client:
         raise RuntimeError("Gemini client not initialized")
@@ -166,7 +166,7 @@ def preprocess_title_and_score(title: str, model: str = "gemini-1.5-flash") -> P
     )
     return resp.parsed
 
-def process_content_for_platforms(content: str, platforms: List[str], model: str = "gemini-1.5-pro") -> ContentProcessOutput:
+def process_content_for_platforms(content: str, platforms: List[str], model: str = "gemini-2.5-flash") -> ContentProcessOutput:
     """مرحله ۲: محتوای اصلی را بر اساس پلتفرم‌های درخواستی و با بهینه‌سازی دقیق هزینه پردازش می‌کند."""
     if not client:
         raise RuntimeError("Gemini client not initialized")
