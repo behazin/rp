@@ -23,7 +23,7 @@ logger = logging.getLogger("telegram-manager-webhook")
 
 MANAGEMENT_API_URL = os.getenv("MANAGEMENT_API_URL", "http://management-api:8000")
 TELEGRAM_ADMIN_BOT_TOKEN = os.getenv("TELEGRAM_ADMIN_BOT_TOKEN")
-TELEGRAM_ADMIN_CHAT_ID = os.getenv("TELEGRAM_ADMIN_CHAT_ID")
+TELEGRAM_ADMIN_CHAT_IDS = os.getenv("TELEGRAM_ADMIN_CHAT_ID", "").split(',')
 WEBHOOK_URL = os.getenv("WEBHOOK_URL")
 
 # --- RabbitMQ Queues ---
@@ -81,23 +81,30 @@ def send_initial_approval_request(bot_instance, post_data):
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
-    try:
-        sent_message = None
-        if featured_image_url:
-            sent_message = bot_instance.send_photo(chat_id=TELEGRAM_ADMIN_CHAT_ID, photo=featured_image_url,
-                                                 caption=text, parse_mode="Markdown", reply_markup=reply_markup)
-        else:
-            sent_message = bot_instance.send_message(chat_id=TELEGRAM_ADMIN_CHAT_ID, text=text,
-                                                  parse_mode="Markdown", reply_markup=reply_markup)
+    first_message = True
+    for chat_id in TELEGRAM_ADMIN_CHAT_IDS:
+        if not chat_id:
+            continue
+        try:
+            sent_message = None
+            if featured_image_url:
+                sent_message = bot_instance.send_photo(chat_id=chat_id, photo=featured_image_url,
+                                                     caption=text, parse_mode="Markdown", reply_markup=reply_markup)
+            else:
+                sent_message = bot_instance.send_message(chat_id=chat_id, text=text,
+                                                      parse_mode="Markdown", reply_markup=reply_markup)
 
-        logger.info(f"Sent post_id {post_id} for initial approval.")
-        info_payload = {"admin_chat_id": sent_message.chat_id, "admin_message_id": sent_message.message_id}
-        requests.post(f"{MANAGEMENT_API_URL}/posts/{post_id}/admin-message-info", json=info_payload).raise_for_status()
-        mark_as_pending_approval(post_id)
-        return True
-    except Exception as e:
-        logger.error(f"Failed to send initial request for post_id {post_id}. Error: {e}")
-        return False
+            logger.info(f"Sent post_id {post_id} for initial approval to chat_id {chat_id}.")
+            
+            if first_message:
+                info_payload = {"admin_chat_id": sent_message.chat_id, "admin_message_id": sent_message.message_id}
+                requests.post(f"{MANAGEMENT_API_URL}/posts/{post_id}/admin-message-info", json=info_payload).raise_for_status()
+                mark_as_pending_approval(post_id)
+                first_message = False
+
+        except Exception as e:
+            logger.error(f"Failed to send initial request for post_id {post_id} to chat_id {chat_id}. Error: {e}")
+    return not first_message # Return True if at least one message was sent
 
 def update_message_for_final_approval(bot_instance, post_data):
     """پیام مدیر را با محتوای پردازش شده و کیبورد هوشمند آپدیت می‌کند."""
@@ -273,7 +280,7 @@ def button_callback(update, context):
             # پس از تایید نهایی، کیبورد را حذف می‌کنیم
             query.edit_message_reply_markup(reply_markup=None)
             if query.message.caption:
-                query.edit_message_caption(caption=f"{text}\n\n✅ *تأیید نهایی شد. در صف انتشار قرار گرفت.*")
+                query.edit_message_caption(caption=f"{text}\n\n✅ *تأیید نهایی شد. در صف انتشار قرار گرفت.*",)
             else:
                 query.edit_message_text(text=f"{text}\n\n✅ *تأیید نهایی شد. در صف انتشار قرار گرفت.*")
         except requests.exceptions.RequestException as e:
@@ -299,7 +306,7 @@ async def startup_event():
     if not WEBHOOK_URL:
         logger.critical("❌ WEBHOOK_URL environment variable is not set.")
         return
-    if not all([TELEGRAM_ADMIN_BOT_TOKEN, TELEGRAM_ADMIN_CHAT_ID]):
+    if not all([TELEGRAM_ADMIN_BOT_TOKEN, TELEGRAM_ADMIN_CHAT_IDS]):
         logger.critical("❌ TELEGRAM_ADMIN_BOT_TOKEN and TELEGRAM_ADMIN_CHAT_ID must be set.")
         return
 
