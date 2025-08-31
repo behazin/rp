@@ -78,10 +78,10 @@ class PostTranslation(Base):
     post_id = Column(Integer, ForeignKey("posts.id"), nullable=False)
     language = Column(String(5), nullable=False) # e.g., "fa", "ar", "tr"
     score = Column(Float) # امتیاز هوش مصنوعی
-    title_translated = Column(String(512))
+    title_translated = Column(Text)
     content_translated = Column(Text)
-    featured_image_url = Column(String(2048))
-    content_telegram = Column(String(1024))
+    featured_image_url = Column(Text)
+    content_telegram = Column(Text)
     content_instagram = Column(Text)
-    content_twitter = Column(String(280))
+    content_twitter = Column(Text)
     post = relationship("Post", back_populates="translations")
