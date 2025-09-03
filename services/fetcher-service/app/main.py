@@ -193,7 +193,7 @@ def fetch_job():
 # ---------------------------
 def main():
     logger.info("--- 🤖 Fetcher Service Started ---")
-    schedule.every(5).minutes.do(fetch_job)
+    schedule.every(60).minutes.do(fetch_job)
 
     logger.info("Initial fetch run will start after a short delay...")
     time.sleep(15)
